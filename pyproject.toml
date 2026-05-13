@@ -26,6 +26,7 @@ dev = [
 [tool.ruff]
 line-length = 88
 preview = true
+src = ["pkg", "tests"]
 
 [tool.ruff.lint]
 select = [
@@ -114,6 +115,9 @@ datetime = "dt"
 "unittest.mock" = "mock"
 "msgspec.json" = "msjson"
 typing = "typ"
+
+[tool.ruff.lint.isort]
+known-first-party = ["pylint_pypy_shim"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 8
