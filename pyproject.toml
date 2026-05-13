@@ -13,6 +13,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "build",
+    "hypothesis",
     "pytest",
     "pytest-bdd",
     "ruff",

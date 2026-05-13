@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import builtins
 import inspect
+import logging
 import typing as typ
+
+import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from pylint_pypy_shim import _patch
 
@@ -17,9 +22,6 @@ from .test_patch_support import (
     run_object_builder,
     setup_fake_dependencies,
 )
-
-if typ.TYPE_CHECKING:
-    import pytest
 
 
 class _ClassWithClassMethod:
@@ -112,6 +114,52 @@ def test_resolve_member_signals_skip_when_getattr_fails(
     )
     assert should_skip is True, "_resolve_member must signal skip when getattr raises"
     assert not calls, "_resolve_member must not attach dummy nodes directly"
+
+
+@pytest.mark.parametrize("exception_type", [AttributeError, TypeError])
+def test_resolve_member_logs_getattr_failures(
+    caplog: pytest.LogCaptureFixture,
+    exception_type: type[Exception],
+) -> None:
+    """Getattr failures are observable at debug level."""
+
+    class FailingAttribute:
+        def __getattr__(self, name: str) -> object:
+            raise exception_type(name)
+
+    logger = logging.getLogger("tests.resolve-member")
+    with caplog.at_level(logging.DEBUG, logger=logger.name):
+        member, is_pypy_class_getitem, should_skip = _patch._resolve_member(
+            FakeNode(),
+            FailingAttribute(),
+            "missing",
+            logger,
+        )
+
+    assert member is None
+    assert is_pypy_class_getitem is False
+    assert should_skip is True
+    assert "Skipping 'missing'" in caplog.text
+
+
+@given(st.sampled_from([AttributeError, TypeError]))
+def test_resolve_member_getattr_failure_property(
+    exception_type: type[Exception],
+) -> None:
+    """Supported getattr failures always return a skip signal."""
+
+    class FailingAttribute:
+        def __getattr__(self, name: str) -> object:
+            raise exception_type(name)
+
+    member, _is_pypy_class_getitem, should_skip = _patch._resolve_member(
+        FakeNode(),
+        FailingAttribute(),
+        "missing",
+    )
+
+    assert member is None
+    assert should_skip is True
 
 
 def test_dispatch_member_to_child_routes_builtins(
@@ -213,6 +261,89 @@ def test_object_build_ignores_non_string_dir_entries(
     assert list(node.locals) == ["child"], (
         "object builder must not attach locals for non-string aliases"
     )
+
+
+@given(st.lists(st.one_of(st.integers(), st.none(), st.booleans()), min_size=1))
+def test_object_build_ignores_all_non_string_dir_entries_property(
+    aliases: list[object],
+) -> None:
+    """Non-string aliases never reach member resolution or local attachment."""
+    builder = FakeBuilder()
+    node = FakeNode()
+    target = object()
+    resolved_aliases: list[str] = []
+
+    def fake_dir(obj: object) -> list[object]:
+        assert obj is target
+        return aliases
+
+    def fake_resolve_member(
+        node_arg: object,
+        obj: object,
+        alias: str,
+        logger: object | None = None,
+    ) -> tuple[object, bool, bool]:
+        del node_arg, obj, logger
+        resolved_aliases.append(alias)
+        return object(), False, False
+
+    with pytest.MonkeyPatch.context() as property_monkeypatch:
+        property_monkeypatch.setattr(builtins, "dir", fake_dir)
+        property_monkeypatch.setattr(_patch, "_resolve_member", fake_resolve_member)
+        _patch._object_build_without_pypy_descriptor_aliases(builder, node, target)
+
+    assert resolved_aliases == []
+    assert node.locals == {}
+
+
+def test_fake_builder_object_build_resets_between_tests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A class-level monkey patch cannot leak into later tests."""
+
+    def patched_object_build(self: object, child: object, member: object) -> None:
+        del self, child, member
+        msg = "leaked patch"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(FakeBuilder, "object_build", patched_object_build)
+
+    builder = FakeBuilder()
+
+    with pytest.raises(AssertionError, match="leaked patch"):
+        builder.object_build(object(), object())
+
+
+def test_fake_builder_object_build_is_original_after_reset() -> None:
+    """The autouse reset fixture restores FakeBuilder.object_build."""
+    builder = FakeBuilder()
+    child = object()
+    member = object()
+
+    builder.object_build(child, member)
+
+    assert builder.object_build_calls == [(child, member)]
+
+
+def test_protocol_stub_methods_raise_not_implemented() -> None:
+    """Protocol helper stubs fail loudly if called directly."""
+    with pytest.raises(NotImplementedError):
+        _patch._AstroidNode.add_local_node(
+            typ.cast("_patch._AstroidNode", object()), object(), "child"
+        )
+    with pytest.raises(NotImplementedError):
+        _patch._InspectBuilder.imported_member(
+            typ.cast("_patch._InspectBuilder", object()),
+            FakeNode(),
+            object(),
+            "child",
+        )
+    with pytest.raises(NotImplementedError):
+        _patch._InspectBuilder.object_build(
+            typ.cast("_patch._InspectBuilder", object()),
+            object(),
+            object(),
+        )
 
 
 def test_install_patch_skips_non_pypy(

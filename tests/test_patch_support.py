@@ -69,9 +69,17 @@ class FakeBuilder(_patch._InspectBuilder):
         self.object_build_calls.append((child, member))
 
 
+_ORIGINAL_FAKE_BUILDER_OBJECT_BUILD = FakeBuilder.object_build
+
+
 @pytest.fixture(autouse=True)
 def reset_fake_astroid_state(monkeypatch: pytest.MonkeyPatch) -> None:
     """Reset patched Astroid stand-ins so tests do not depend on order."""
+    monkeypatch.setattr(
+        FakeBuilder,
+        "object_build",
+        _ORIGINAL_FAKE_BUILDER_OBJECT_BUILD,
+    )
 
     class FreshFakeBuilder(FakeBuilder):
         """Fresh InspectBuilder stand-in for per-test monkeypatch isolation."""

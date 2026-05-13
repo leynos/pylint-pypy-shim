@@ -35,6 +35,7 @@ class _AstroidNode(typ.Protocol):
 
     def add_local_node(self, child_node: object, name: str) -> None:
         """Attach a local child node."""
+        raise NotImplementedError
 
 
 class _InspectBuilder(typ.Protocol):
@@ -45,9 +46,11 @@ class _InspectBuilder(typ.Protocol):
 
     def imported_member(self, node: _AstroidNode, member: object, alias: str) -> bool:
         """Return whether *member* is an imported alias."""
+        raise NotImplementedError
 
     def object_build(self, child: object, member: object) -> None:
         """Build child members recursively."""
+        raise NotImplementedError
 
 
 def _cached_child_type_error(member: object, child: object) -> str:
