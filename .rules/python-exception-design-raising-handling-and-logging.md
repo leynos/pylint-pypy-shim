@@ -290,15 +290,32 @@ select = [
 - Ruff rules: Tryceratops (TRY), Blind Except (BLE001), flake8‑errmsg
   (EM101/EM102), flake8‑logging (LOG004/LOG007/LOG009/LOG014/LOG015), N818,
   PERF203, B017.
-  - [https://docs.astral.sh/ruff/rules/#tryceratops-try](https://docs.astral.sh/ruff/rules/#tryceratops-try)
-  - [https://docs.astral.sh/ruff/rules/blind-except/](https://docs.astral.sh/ruff/rules/blind-except/)
-  - [https://docs.astral.sh/ruff/rules/assert-raises-exception/](https://docs.astral.sh/ruff/rules/assert-raises-exception/)
-  - [https://docs.astral.sh/ruff/rules/#flake8-errmsg-em](https://docs.astral.sh/ruff/rules/#flake8-errmsg-em)
-  - [https://docs.astral.sh/ruff/rules/#flake8-logging-log](https://docs.astral.sh/ruff/rules/#flake8-logging-log)
-  - [https://docs.astral.sh/ruff/rules/error-suffix-on-exception-name/](https://docs.astral.sh/ruff/rules/error-suffix-on-exception-name/)
-  - [https://docs.astral.sh/ruff/rules/try-except-in-loop/](https://docs.astral.sh/ruff/rules/try-except-in-loop/)
+  - [Tryceratops (TRY)][ruff-try]
+  - [Blind Except (BLE001)][ruff-blind-except]
+  - [assert-raises-exception][ruff-assert-raises-exception]
+  - [flake8-errmsg (EM)][ruff-em]
+  - [flake8-logging (LOG)][ruff-log]
+  - [error-suffix-on-exception-name][ruff-error-suffix]
+  - [try-except-in-loop][ruff-try-except-in-loop]
 - Gui Commits practice notes:
-  - Exception structure:
-    [https://guicommits.com/how-to-structure-exception-in-python-like-a-pro/](https://guicommits.com/how-to-structure-exception-in-python-like-a-pro/)
-  - Logging guidance:
-    [https://guicommits.com/how-to-log-in-python-like-a-pro/](https://guicommits.com/how-to-log-in-python-like-a-pro/)
+  - [Exception structure][gui-exception-structure]
+  - [Logging guidance][gui-logging-guidance]
+
+[ruff-try]:
+  https://docs.astral.sh/ruff/rules/#tryceratops-try
+[ruff-blind-except]:
+  https://docs.astral.sh/ruff/rules/blind-except/
+[ruff-assert-raises-exception]:
+  https://docs.astral.sh/ruff/rules/assert-raises-exception/
+[ruff-em]:
+  https://docs.astral.sh/ruff/rules/#flake8-errmsg-em
+[ruff-log]:
+  https://docs.astral.sh/ruff/rules/#flake8-logging-log
+[ruff-error-suffix]:
+  https://docs.astral.sh/ruff/rules/error-suffix-on-exception-name/
+[ruff-try-except-in-loop]:
+  https://docs.astral.sh/ruff/rules/try-except-in-loop/
+[gui-exception-structure]:
+  https://guicommits.com/how-to-structure-exception-in-python-like-a-pro/
+[gui-logging-guidance]:
+  https://guicommits.com/how-to-log-in-python-like-a-pro/

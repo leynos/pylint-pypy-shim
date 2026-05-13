@@ -47,7 +47,7 @@ def test_main_installs_patch_and_returns_pylint_status(
 
 @pytest.mark.parametrize(
     ("system_exit_code", "expected_status"),
-    [(None, 0), (3, 3), ("fatal", 1)],
+    [(None, 0), (3, 3), (True, 1), (False, 0), ("fatal", 0)],
 )
 def test_main_handles_legacy_pylint_system_exit_codes(
     monkeypatch: pytest.MonkeyPatch,
@@ -57,11 +57,8 @@ def test_main_handles_legacy_pylint_system_exit_codes(
     """Legacy Pylint API exit payloads are converted safely."""
 
     class FakeRun:
-        def __init__(self, argv: list[str], *, exit: bool | None = None) -> None:  # noqa: A002
+        def __init__(self, argv: list[str]) -> None:
             del argv
-            if exit is False:
-                msg = "legacy Run does not accept exit"
-                raise TypeError(msg)
             raise SystemExit(system_exit_code)
 
     fake_pylint = typ.cast("typ.Any", types.ModuleType("pylint"))
