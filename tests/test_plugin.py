@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import typing as typ
 
+import pylint_pypy_shim
 from pylint_pypy_shim import plugin
 
 if typ.TYPE_CHECKING:
@@ -26,3 +27,9 @@ def test_register_installs_patch_without_using_linter(
     plugin.register(linter)
 
     assert calls == [logging.getLogger(plugin.__name__)]
+
+
+def test_package_register_matches_documented_plugin_path() -> None:
+    """The documented Pylint plugin module exposes ``register`` directly."""
+    assert pylint_pypy_shim.register is plugin.register
+    assert "register" in pylint_pypy_shim.__all__
