@@ -301,6 +301,12 @@ def install_patch(logger: logging.Logger | None = None) -> None:
         ).object_build = _object_build_without_pypy_descriptor_aliases
         _PATCH_INSTALLED = True
         _LOG.info("astroid InspectBuilder.object_build patched for PyPy")
+        _LOG.info(
+            "pylint=%s astroid=%s runtime=%s",
+            pylint_version,
+            astroid_version,
+            sys.implementation.name,
+        )
 
 
 def _is_supported_version(version: str, minimum: int, maximum: int) -> bool:
