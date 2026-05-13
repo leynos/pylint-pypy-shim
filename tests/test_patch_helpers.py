@@ -264,7 +264,7 @@ def test_build_class_child_raises_on_cached_non_class() -> None:
     member = type("BrokenCachedClass", (), {})
     builder._done[member] = object()
 
-    with pytest.raises(AssertionError, match="must be a ClassDef"):
+    with pytest.raises(_patch.CachedChildTypeError, match="must be a ClassDef"):
         _patch._build_class_child(
             as_inspect_builder(builder),
             as_astroid_node(node),
@@ -501,7 +501,7 @@ def test_object_build_ignores_non_string_dir_entries(
     target = type("Target", (), {})
     resolved_aliases: list[str] = []
 
-    class _Alias(str):  # noqa: FURB189
+    class _Alias(str):  # noqa: FURB189 - intentional str-like alias subclass.
         """String subclass used to prove str-like aliases are accepted."""
 
     def fake_dir(obj: object) -> list[object]:
@@ -752,7 +752,7 @@ def test_install_patch_raises_for_unsupported_versions_in_strict_mode(
     monkeypatch.setattr(_patch.sys.implementation, "name", "pypy", raising=False)
     monkeypatch.setattr(astroid, "__version__", "0.0.0")
     monkeypatch.setattr(pylint, "__version__", "0.0.0")
-    monkeypatch.setenv("PYLINT_PYPY_SHIM_STRICT", "1")
+    monkeypatch.setenv("PYLINT_PYPY_SHIM_STRICT", " 1 ")
     original_object_build = _patch.raw_building.InspectBuilder.object_build
 
     with pytest.raises(RuntimeError, match="unsupported versions"):

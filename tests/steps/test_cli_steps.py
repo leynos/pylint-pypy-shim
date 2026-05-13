@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import subprocess  # noqa: S404
+import subprocess  # noqa: S404 - safe: test harness runs CLI wrapper subprocess.
 import sys
 import typing as typ
 
@@ -51,7 +51,7 @@ def given_python_module_with_violation(tmp_path: Path) -> Path:
 def when_run_cli(module_path: Path) -> subprocess.CompletedProcess[str]:
     """Run the wrapper in a subprocess."""
     pytest.importorskip("pylint")
-    return subprocess.run(  # noqa: S603
+    return subprocess.run(  # noqa: S603 - safe: controlled input; check=False.
         [
             sys.executable,
             "-m",

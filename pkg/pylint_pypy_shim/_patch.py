@@ -1,4 +1,24 @@
-"""PyPy-safe Astroid object builder patch."""
+"""PyPy-safe Astroid object builder patch.
+
+PyPy exposes a few descriptor aliases differently from CPython. Astroid's
+inspection builder can then try to resolve non-string ``dir()`` entries or
+descriptor aliases in ways that fail before Pylint can attach a harmless dummy
+node.
+
+``install_patch()`` applies a guarded monkey patch to Astroid's
+``InspectBuilder.object_build`` implementation so descriptor and attribute
+resolution behave correctly under PyPy:
+
+```python
+from pylint_pypy_shim._patch import install_patch
+
+install_patch()
+```
+
+Invoke it early in process startup, before Pylint begins importing modules for
+analysis. The patch is a no-op on CPython and is limited to supported Pylint and
+Astroid major versions.
+"""
 
 from __future__ import annotations
 
@@ -32,6 +52,14 @@ _PATCH_LOCK = threading.Lock()
 _PATCH_INSTALLED = False
 
 
+class PatchError(RuntimeError):
+    """Base exception for PyPy shim patch failures."""
+
+
+class CachedChildTypeError(PatchError):
+    """Raised when Astroid's builder cache contains an unexpected node type."""
+
+
 def _cached_child_type_error(member: object, child: object) -> str:
     """Describe a cached Astroid child type invariant failure."""
     return f"_done entry for {member!r} must be a ClassDef, got {type(child).__name__}"
@@ -48,7 +76,7 @@ def _build_builtin_child(
         return None
     return object_build_methoddescriptor(
         node,
-        member,  # ty: ignore[invalid-argument-type]
+        member,  # type: ignore[invalid-argument-type]
     )
 
 
@@ -64,7 +92,7 @@ def _build_class_child(
     if member in self._done:
         child = self._done[member]
         if not isinstance(child, nodes.ClassDef):
-            raise AssertionError(_cached_child_type_error(member, child))
+            raise CachedChildTypeError(_cached_child_type_error(member, child))
         return child
     child = object_build_class(node, member)
     self.object_build(child, member)
@@ -79,7 +107,7 @@ def _build_const_child(
     """Build a const child unless the alias is already a special attribute."""
     if alias in node.special_attributes:
         return None
-    return nodes.const_factory(member)  # ty: ignore[invalid-return-type]
+    return nodes.const_factory(member)  # type: ignore[invalid-return-type]
 
 
 def _attach_child_node(
@@ -92,7 +120,7 @@ def _attach_child_node(
         node.add_local_node(child, alias)
 
 
-def _dispatch_member_to_child(  # noqa: PLR0911
+def _dispatch_member_to_child(  # noqa: PLR0911 -- dispatcher exits by member type.
     self: raw_building.InspectBuilder,
     node: nodes.Module | nodes.ClassDef,
     member: object,
@@ -111,7 +139,7 @@ def _dispatch_member_to_child(  # noqa: PLR0911
     if inspect.isdatadescriptor(member):
         return object_build_datadescriptor(
             node,
-            member,  # ty: ignore[invalid-argument-type]
+            member,  # type: ignore[invalid-argument-type]
         )
     if isinstance(member, tuple(node_classes.CONST_CLS)):
         return _build_const_child(node, member, alias)
@@ -119,23 +147,22 @@ def _dispatch_member_to_child(  # noqa: PLR0911
         return _build_from_function(
             node,
             member,
-            self._module,  # ty: ignore[invalid-argument-type]
+            self._module,  # type: ignore[invalid-argument-type]
         )
     if _safe_has_attribute(member, "__all__"):
         child = build_module(alias)
-        self.object_build(child, member)  # ty: ignore[invalid-argument-type]
+        self.object_build(child, member)  # type: ignore[invalid-argument-type]
         return child
     return build_dummy(member)
 
 
 def _resolve_member(
-    node: nodes.Module | nodes.ClassDef,
+    _node: nodes.Module | nodes.ClassDef,
     obj: object,
     alias: str,
     logger: logging.Logger | None = None,
 ) -> tuple[object | None, bool, bool]:
     """Resolve *alias* from *obj* and report whether the caller should skip it."""
-    del node
     pypy__class_getitem__ = IS_PYPY and alias == "__class_getitem__"
     try:
         member = getattr(obj, alias)
@@ -208,7 +235,7 @@ def install_patch(logger: logging.Logger | None = None) -> None:
             pylint_version,
             astroid_version,
         )
-        raw_building.InspectBuilder.object_build = (  # ty: ignore[invalid-assignment]
+        raw_building.InspectBuilder.object_build = (  # type: ignore[invalid-assignment]
             _object_build_without_pypy_descriptor_aliases
         )
         _PATCH_INSTALLED = True
@@ -241,7 +268,7 @@ def _handle_unsupported_versions(
 
 def _is_strict_mode_enabled() -> bool:
     """Return whether package-specific strict mode is explicitly enabled."""
-    return os.environ.get(_STRICT_ENV_VAR) == "1"
+    return os.environ.get(_STRICT_ENV_VAR, "0").strip() == "1"
 
 
 def _validate_astroid_shape(logger: logging.Logger | None = None) -> None:
