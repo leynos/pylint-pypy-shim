@@ -17,21 +17,27 @@ from .test_patch_support import ObjectBuildScenario, run_object_builder
 
 
 @given(
-    st.lists(
+    non_string_aliases=st.lists(
         st.one_of(st.integers(), st.floats(), st.binary(), st.none()),
-        min_size=1,
+        min_size=0,
         max_size=5,
     ),
+    include_string_alias=st.booleans(),
 )
 def test_non_string_dir_entries_are_ignored(
     non_string_aliases: list[object],
+    include_string_alias: object,
 ) -> None:
     """Only string aliases from ``dir()`` reach local attachment."""
     scenario = ObjectBuildScenario()
+    has_string_alias = bool(include_string_alias)
 
     def fake_dir(obj: object) -> list[object]:
         assert obj is scenario.target
-        return [*non_string_aliases, "ordinary"]
+        aliases: list[object] = [*non_string_aliases]
+        if has_string_alias:
+            aliases.append("ordinary")
+        return aliases
 
     def fake_resolve_member(
         node_arg: object,
@@ -68,7 +74,10 @@ def test_non_string_dir_entries_are_ignored(
 
         run_object_builder(scenario.builder, scenario.node, scenario.target)
 
-    assert scenario.node.locals == {"ordinary": [scenario.ordinary_child]}
+    if has_string_alias:
+        assert scenario.node.locals == {"ordinary": [scenario.ordinary_child]}
+    else:
+        assert scenario.node.locals == {}
 
 
 @given(st.sampled_from([AttributeError, TypeError]))
