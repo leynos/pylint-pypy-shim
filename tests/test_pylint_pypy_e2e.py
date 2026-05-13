@@ -12,10 +12,7 @@ import textwrap
 
 import pytest
 
-if (
-    sys.implementation.name != "pypy"
-    or importlib.util.find_spec("pylint") is None
-):
+if sys.implementation.name != "pypy" or importlib.util.find_spec("pylint") is None:
     pytest.skip("requires PyPy and pylint", allow_module_level=True)
 
 
@@ -43,6 +40,4 @@ def test_pylint_pypy_wrapper_lints_innocuous_file() -> None:
     finally:
         temp_dir.cleanup()
 
-    assert proc.returncode == 0, (
-        f"stdout:\n{proc.stdout}\n\nstderr:\n{proc.stderr}"
-    )
+    assert proc.returncode == 0, f"stdout:\n{proc.stdout}\n\nstderr:\n{proc.stderr}"
