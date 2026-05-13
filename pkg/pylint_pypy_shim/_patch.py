@@ -1,23 +1,42 @@
-"""PyPy-safe Astroid object builder patch.
+"""PyPy-specific Astroid object builder compatibility patch.
 
-PyPy exposes a few descriptor aliases differently from CPython. Astroid's
-inspection builder can then try to resolve non-string ``dir()`` entries or
-descriptor aliases in ways that fail before Pylint can attach a harmless dummy
-node.
+Purpose
+-------
+Astroid's ``InspectBuilder.object_build`` can fail under PyPy because PyPy
+exposes descriptor aliases, such as ``__class_getitem__``, that CPython does
+not expose in the same way. Those aliases can produce unexpected
+``AttributeError`` or ``TypeError`` failures during live-object inspection.
 
-``install_patch()`` applies a guarded monkey patch to Astroid's
-``InspectBuilder.object_build`` implementation so descriptor and attribute
-resolution behave correctly under PyPy:
+Utility
+-------
+This module provides a PyPy-safe replacement object builder that filters
+non-string ``dir()`` entries, suppresses known ``getattr`` failures, and routes
+PyPy's ``__class_getitem__`` alias through Astroid's builtin-member path.
+``install_patch()`` is the public entry point: it monkey-patches Astroid once,
+is guarded by ``_PATCH_INSTALLED`` and ``_PATCH_LOCK``, and only activates when
+running on PyPy.
+
+Examples
+--------
+Install the patch early in program startup, before Astroid starts building
+modules:
 
 ```python
+import logging
+
 from pylint_pypy_shim._patch import install_patch
 
-install_patch()
+install_patch(logger=logging.getLogger(__name__))
+# Astroid's InspectBuilder.object_build is now PyPy-safe.
 ```
 
-Invoke it early in process startup, before Pylint begins importing modules for
-analysis. The patch is a no-op on CPython and is limited to supported Pylint and
-Astroid major versions.
+Side effects
+------------
+``install_patch()`` mutates
+``astroid.raw_building.InspectBuilder.object_build`` globally. Calling it more
+than once is a no-op, and unsupported runtimes or dependency versions leave
+Astroid unchanged unless strict mode is enabled.
+
 """
 
 from __future__ import annotations
@@ -53,11 +72,7 @@ _PATCH_INSTALLED = False
 
 
 class PatchError(RuntimeError):
-    """Base exception for PyPy shim patch failures."""
-
-
-class CachedChildTypeError(PatchError):
-    """Raised when Astroid's builder cache contains an unexpected node type."""
+    """Base exception for pylint-pypy-shim patch errors."""
 
 
 def _cached_child_type_error(member: object, child: object) -> str:
@@ -92,7 +107,7 @@ def _build_class_child(
     if member in self._done:
         child = self._done[member]
         if not isinstance(child, nodes.ClassDef):
-            raise CachedChildTypeError(_cached_child_type_error(member, child))
+            raise PatchError(_cached_child_type_error(member, child))
         return child
     child = object_build_class(node, member)
     self.object_build(child, member)
@@ -120,40 +135,39 @@ def _attach_child_node(
         node.add_local_node(child, alias)
 
 
-def _dispatch_member_to_child(  # noqa: PLR0911 -- dispatcher exits by member type.
+def _dispatch_member_to_child(
     self: raw_building.InspectBuilder,
     node: nodes.Module | nodes.ClassDef,
     member: object,
     alias: str,
 ) -> nodes.NodeNG | None:
     """Dispatch members to the matching Astroid builder."""
-    if inspect.isbuiltin(member):
-        return _build_builtin_child(self, node, member, alias)
-    if inspect.isclass(member):
-        return _build_class_child(self, node, member, alias)
-    if inspect.ismethoddescriptor(member):
-        return object_build_methoddescriptor(
-            node,
-            member,
-        )
-    if inspect.isdatadescriptor(member):
-        return object_build_datadescriptor(
-            node,
-            member,  # type: ignore[invalid-argument-type]
-        )
-    if isinstance(member, tuple(node_classes.CONST_CLS)):
-        return _build_const_child(node, member, alias)
-    if inspect.isroutine(member):
-        return _build_from_function(
-            node,
-            member,
-            self._module,  # type: ignore[invalid-argument-type]
-        )
-    if _safe_has_attribute(member, "__all__"):
-        child = build_module(alias)
-        self.object_build(child, member)  # type: ignore[invalid-argument-type]
-        return child
-    return build_dummy(member)
+    match member:
+        case _ if inspect.isbuiltin(member):
+            child = _build_builtin_child(self, node, member, alias)
+        case _ if inspect.isclass(member):
+            child = _build_class_child(self, node, member, alias)
+        case _ if inspect.ismethoddescriptor(member):
+            child = object_build_methoddescriptor(node, member)
+        case _ if inspect.isdatadescriptor(member):
+            child = object_build_datadescriptor(
+                node,
+                member,  # type: ignore[invalid-argument-type]
+            )
+        case _ if isinstance(member, tuple(node_classes.CONST_CLS)):
+            child = _build_const_child(node, member, alias)
+        case _ if inspect.isroutine(member):
+            child = _build_from_function(
+                node,
+                member,
+                self._module,  # type: ignore[invalid-argument-type]
+            )
+        case _ if _safe_has_attribute(member, "__all__"):
+            child = build_module(alias)
+            self.object_build(child, member)  # type: ignore[invalid-argument-type]
+        case _:
+            child = build_dummy(member)
+    return child
 
 
 def _resolve_member(

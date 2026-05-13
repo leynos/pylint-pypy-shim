@@ -264,7 +264,7 @@ def test_build_class_child_raises_on_cached_non_class() -> None:
     member = type("BrokenCachedClass", (), {})
     builder._done[member] = object()
 
-    with pytest.raises(_patch.CachedChildTypeError, match="must be a ClassDef"):
+    with pytest.raises(_patch.PatchError, match="must be a ClassDef"):
         _patch._build_class_child(
             as_inspect_builder(builder),
             as_astroid_node(node),
