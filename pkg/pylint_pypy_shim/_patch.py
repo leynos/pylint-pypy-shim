@@ -1,0 +1,264 @@
+"""PyPy-safe Astroid object builder patch."""
+
+from __future__ import annotations
+
+import inspect
+import logging
+import os
+import sys
+import typing as typ
+import warnings
+
+from astroid import node_classes, nodes, raw_building
+from astroid.raw_building import (
+    IS_PYPY,
+    _build_from_function,
+    _safe_has_attribute,
+    attach_dummy_node,
+    build_dummy,
+    build_module,
+    object_build_class,
+    object_build_datadescriptor,
+    object_build_methoddescriptor,
+)
+
+_IGNORED_GETATTR_ERRORS = (AttributeError, TypeError)
+_SKIP = object()
+_PATCH_INSTALLED = False
+
+
+class _AstroidNode(typ.Protocol):
+    """Minimal Astroid node surface used by the object builder."""
+
+    locals: dict[str, list[object]]
+    special_attributes: set[str]
+
+    def add_local_node(self, child_node: object, name: str) -> None:
+        """Attach a local child node."""
+
+
+class _InspectBuilder(typ.Protocol):
+    """Minimal Astroid InspectBuilder surface used by the patch."""
+
+    _done: dict[object, object]
+    _module: object
+
+    def imported_member(self, node: _AstroidNode, member: object, alias: str) -> bool:
+        """Return whether *member* is an imported alias."""
+
+    def object_build(self, child: object, member: object) -> None:
+        """Build child members recursively."""
+
+
+def _cached_child_type_error(member: object, child: object) -> str:
+    """Describe a cached Astroid child type invariant failure."""
+    return f"_done entry for {member!r} must be a ClassDef, got {type(child).__name__}"
+
+
+def _build_builtin_child(
+    self: _InspectBuilder,
+    node: _AstroidNode,
+    member: object,
+    alias: str,
+) -> nodes.NodeNG | object:
+    """Build a child for builtins unless Astroid treats it as imported."""
+    if self.imported_member(node, member, alias):
+        return _SKIP
+    return object_build_methoddescriptor(
+        typ.cast("nodes.Module | nodes.ClassDef", node),
+        member,  # ty: ignore[invalid-argument-type]
+    )
+
+
+def _build_class_child(
+    self: _InspectBuilder,
+    node: _AstroidNode,
+    member: type,
+    alias: str,
+) -> nodes.ClassDef | object:
+    """Build or reuse a class child unless Astroid treats it as imported."""
+    if self.imported_member(node, member, alias):
+        return _SKIP
+    if member in self._done:
+        child = self._done[member]
+        if not isinstance(child, nodes.ClassDef):
+            raise AssertionError(_cached_child_type_error(member, child))
+        return child
+    child = object_build_class(typ.cast("nodes.Module | nodes.ClassDef", node), member)
+    self.object_build(child, member)
+    return child
+
+
+def _build_const_child(
+    node: _AstroidNode,
+    member: object,
+    alias: str,
+) -> nodes.Const | object:
+    """Build a const child unless the alias is already a special attribute."""
+    if alias in node.special_attributes:
+        return _SKIP
+    return nodes.const_factory(member)
+
+
+def _attach_child_node(
+    node: _AstroidNode,
+    alias: str,
+    child: object,
+) -> None:
+    """Attach *child* to *node* under *alias* unless it is already present."""
+    if child not in node.locals.get(alias, ()):
+        node.add_local_node(child, alias)
+
+
+def _dispatch_member_to_child(  # noqa: PLR0911
+    self: _InspectBuilder,
+    node: _AstroidNode,
+    member: object,
+    alias: str,
+) -> nodes.NodeNG | object:
+    """Dispatch members to the matching Astroid builder."""
+    if inspect.isbuiltin(member):
+        return _build_builtin_child(self, node, member, alias)
+    if inspect.isclass(member):
+        return _build_class_child(self, node, member, alias)
+    if inspect.ismethoddescriptor(member):
+        return object_build_methoddescriptor(
+            typ.cast("nodes.Module | nodes.ClassDef", node),
+            member,
+        )
+    if inspect.isdatadescriptor(member):
+        return object_build_datadescriptor(
+            typ.cast("nodes.Module | nodes.ClassDef", node),
+            member,  # ty: ignore[invalid-argument-type]
+        )
+    if isinstance(member, tuple(node_classes.CONST_CLS)):
+        return _build_const_child(node, member, alias)
+    if inspect.isroutine(member):
+        return _build_from_function(
+            typ.cast("nodes.Module | nodes.ClassDef", node),
+            member,
+            self._module,  # ty: ignore[invalid-argument-type]
+        )
+    if _safe_has_attribute(member, "__all__"):
+        child = build_module(alias)
+        self.object_build(child, member)
+        return child
+    return build_dummy(member)
+
+
+def _resolve_member(
+    node: _AstroidNode,
+    obj: object,
+    alias: str,
+    logger: logging.Logger | None = None,
+) -> tuple[object | None, bool, bool]:
+    """Resolve *alias* from *obj* and report whether the caller should skip it."""
+    del node
+    pypy__class_getitem__ = IS_PYPY and alias == "__class_getitem__"
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            member = getattr(obj, alias)
+    except _IGNORED_GETATTR_ERRORS as error:
+        if logger is not None:
+            logger.debug("Skipping %r from %r: %s", alias, obj, error)
+        return None, pypy__class_getitem__, True
+    if inspect.ismethod(member) and not pypy__class_getitem__:
+        member = member.__func__
+    return member, pypy__class_getitem__, False
+
+
+def _object_build_without_pypy_descriptor_aliases(
+    self: _InspectBuilder,
+    node: _AstroidNode,
+    obj: object,
+) -> None:
+    """Build Astroid nodes while ignoring non-string PyPy ``dir()`` entries."""
+    if obj in self._done:
+        return
+    self._done[obj] = node
+    logger = logging.getLogger(__name__)
+    for alias in dir(obj):
+        if not isinstance(alias, str):
+            continue
+        member, pypy__class_getitem__, skip = _resolve_member(node, obj, alias, logger)
+        if skip:
+            attach_dummy_node(node, alias)
+            continue
+        if pypy__class_getitem__:
+            child = _build_builtin_child(self, node, member, alias)
+        else:
+            child = _dispatch_member_to_child(self, node, member, alias)
+        if child is _SKIP:
+            continue
+        _attach_child_node(node, alias, child)
+
+
+def install_patch(logger: logging.Logger | None = None) -> None:
+    """Install the PyPy Astroid object-build patch when versions are supported."""
+    active_logger = logger or logging.getLogger(__name__)
+    if sys.implementation.name != "pypy":
+        active_logger.debug("Skipping PyPy Astroid object_build patch on non-PyPy")
+        return
+
+    import astroid
+    import pylint
+
+    pylint_version = getattr(pylint, "__version__", "0")
+    astroid_version = getattr(astroid, "__version__", "0")
+    if not _is_supported_version(pylint_version, 4, 5) or not _is_supported_version(
+        astroid_version,
+        4,
+        5,
+    ):
+        _handle_unsupported_versions(active_logger, pylint_version, astroid_version)
+        return
+
+    _validate_astroid_shape()
+    global _PATCH_INSTALLED
+    if _PATCH_INSTALLED:
+        active_logger.debug("PyPy Astroid object_build patch already installed")
+        return
+    active_logger.info(
+        "Installing PyPy Astroid object_build patch (pylint %s, astroid %s)",
+        pylint_version,
+        astroid_version,
+    )
+    raw_building.InspectBuilder.object_build = (  # ty: ignore[invalid-assignment]
+        _object_build_without_pypy_descriptor_aliases
+    )
+    _PATCH_INSTALLED = True
+
+
+def _is_supported_version(version: str, minimum: int, maximum: int) -> bool:
+    """Return whether *version* is within the supported major range."""
+    try:
+        major = int(version.split(".", maxsplit=1)[0])
+    except ValueError:
+        return False
+    return minimum <= major < maximum
+
+
+def _handle_unsupported_versions(
+    logger: logging.Logger,
+    pylint_version: str,
+    astroid_version: str,
+) -> None:
+    """Warn or fail when the installed Pylint/Astroid versions are unknown."""
+    message = (
+        "Skipping PyPy Astroid object_build patch for unsupported versions "
+        f"(pylint {pylint_version}, astroid {astroid_version})"
+    )
+    if os.environ.get("STRICT"):
+        raise RuntimeError(message)
+    logger.warning(message)
+
+
+def _validate_astroid_shape() -> None:
+    """Assert that Astroid still exposes the inspected patch target."""
+    assert hasattr(raw_building, "InspectBuilder"), (  # noqa: S101
+        "astroid.raw_building.InspectBuilder is required"
+    )
+    assert hasattr(raw_building.InspectBuilder, "object_build"), (  # noqa: S101
+        "InspectBuilder.object_build is required"
+    )

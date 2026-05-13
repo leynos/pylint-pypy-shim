@@ -5,11 +5,16 @@ description = "pylint-pypy-shim package"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "ISC" }
-dependencies = []
+dependencies = [
+    "pylint>=4,<5",
+    "astroid>=4,<5",
+]
 
 [dependency-groups]
 dev = [
+    "build",
     "pytest",
+    "pytest-bdd",
     "ruff",
     "pyright",
     "pytest-timeout",
@@ -123,8 +128,15 @@ timeout = 30
 [tool.uv]
 package = true
 
+[tool.hatch.build.targets.wheel]
+packages = ["pkg/pylint_pypy_shim"]
+
+[project.entry-points."pylint"]
+pylint_pypy_shim = "pylint_pypy_shim.plugin"
+
+[project.scripts]
+pylint-pypy = "pylint_pypy_shim.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
