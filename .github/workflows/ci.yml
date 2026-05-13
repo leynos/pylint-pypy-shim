@@ -47,7 +47,7 @@ jobs:
         run: |
           uv pip install slipcover pytest-forked
           uv run python -m slipcover \
-            --source=./pylint_pypy_shim \
+            --source=./pkg/pylint_pypy_shim \
             --omit="*/unittests/*,*/.venv/*" \
             --branch \
             --out coverage.xml \

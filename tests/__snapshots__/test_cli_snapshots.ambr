@@ -1,0 +1,8 @@
+# serializer version: 1
+# name: test_cli_violation_output_snapshot
+  '''
+  ************* Module violating_module
+  <module>:1:0: C0114: Missing module docstring (missing-module-docstring)
+  
+  '''
+# ---

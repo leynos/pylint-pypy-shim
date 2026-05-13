@@ -14,6 +14,7 @@ class enables callers to catch all domain failures without vendor leakage.
 class PaymentsError(Exception):
     """All payment-layer errors."""
 
+
 class CardDeclinedError(PaymentsError):  # ✅ ends with Error (N818)
     def __init__(self, code: str, *, retry_after: int | None = None):
         super().__init__(f"Card declined ({code})")
@@ -114,13 +115,14 @@ clarifies intent.
 
 ```python
 import logging
+
 logger = logging.getLogger(__name__)
 
 # ❌ LOG issues
-logging.warning(f"failed for {user_id}")        # f-string (LOG004/LOG014)
-logging.warning("failed for %s" % user_id)      # %-formatting (LOG007)
-logging.warn("deprecated")                       # warn() (LOG009)
-logging.error("bad root logger")                 # root logger usage (LOG015)
+logging.warning(f"failed for {user_id}")  # f-string (LOG004/LOG014)
+logging.warning("failed for %s" % user_id)  # %-formatting (LOG007)
+logging.warn("deprecated")  # warn() (LOG009)
+logging.error("bad root logger")  # root logger usage (LOG015)
 
 # ✅ Correct
 logger.warning("Failed for user_id=%s", user_id)  # lazy interpolation
@@ -203,7 +205,7 @@ def charge(amount_pennies: int, card_token: str) -> str:
     try:
         return gateway.charge(amount_pennies, card_token)
     except gateway.Timeout as exc:
-        raise PaymentsError("Gateway timeout") from exc      # ✅ TRY201
+        raise PaymentsError("Gateway timeout") from exc  # ✅ TRY201
     except gateway.CardDeclined as exc:
         raise CardDeclinedError(exc.code, retry_after=60) from exc
 ```
@@ -226,6 +228,7 @@ def must_have_key(d: dict, key: str) -> None:
     if key not in d:
         msg = f"Missing required key: {key!r}"
         raise KeyError(msg)
+
 
 logger.info("Dispatching order_id=%s to shop_id=%s", order_id, shop_id)  # structured
 ```
@@ -287,15 +290,32 @@ select = [
 - Ruff rules: Tryceratops (TRY), Blind Except (BLE001), flake8‑errmsg
   (EM101/EM102), flake8‑logging (LOG004/LOG007/LOG009/LOG014/LOG015), N818,
   PERF203, B017.
-  - [https://docs.astral.sh/ruff/rules/#tryceratops-try](https://docs.astral.sh/ruff/rules/#tryceratops-try)
-  - [https://docs.astral.sh/ruff/rules/blind-except/](https://docs.astral.sh/ruff/rules/blind-except/)
-  - [https://docs.astral.sh/ruff/rules/assert-raises-exception/](https://docs.astral.sh/ruff/rules/assert-raises-exception/)
-  - [https://docs.astral.sh/ruff/rules/#flake8-errmsg-em](https://docs.astral.sh/ruff/rules/#flake8-errmsg-em)
-  - [https://docs.astral.sh/ruff/rules/#flake8-logging-log](https://docs.astral.sh/ruff/rules/#flake8-logging-log)
-  - [https://docs.astral.sh/ruff/rules/error-suffix-on-exception-name/](https://docs.astral.sh/ruff/rules/error-suffix-on-exception-name/)
-  - [https://docs.astral.sh/ruff/rules/try-except-in-loop/](https://docs.astral.sh/ruff/rules/try-except-in-loop/)
+  - [Tryceratops (TRY)][ruff-try]
+  - [Blind Except (BLE001)][ruff-blind-except]
+  - [assert-raises-exception][ruff-assert-raises-exception]
+  - [flake8-errmsg (EM)][ruff-em]
+  - [flake8-logging (LOG)][ruff-log]
+  - [error-suffix-on-exception-name][ruff-error-suffix]
+  - [try-except-in-loop][ruff-try-except-in-loop]
 - Gui Commits practice notes:
-  - Exception structure:
-    [https://guicommits.com/how-to-structure-exception-in-python-like-a-pro/](https://guicommits.com/how-to-structure-exception-in-python-like-a-pro/)
-  - Logging guidance:
-    [https://guicommits.com/how-to-log-in-python-like-a-pro/](https://guicommits.com/how-to-log-in-python-like-a-pro/)
+  - [Exception structure][gui-exception-structure]
+  - [Logging guidance][gui-logging-guidance]
+
+[ruff-try]:
+  https://docs.astral.sh/ruff/rules/#tryceratops-try
+[ruff-blind-except]:
+  https://docs.astral.sh/ruff/rules/blind-except/
+[ruff-assert-raises-exception]:
+  https://docs.astral.sh/ruff/rules/assert-raises-exception/
+[ruff-em]:
+  https://docs.astral.sh/ruff/rules/#flake8-errmsg-em
+[ruff-log]:
+  https://docs.astral.sh/ruff/rules/#flake8-logging-log
+[ruff-error-suffix]:
+  https://docs.astral.sh/ruff/rules/error-suffix-on-exception-name/
+[ruff-try-except-in-loop]:
+  https://docs.astral.sh/ruff/rules/try-except-in-loop/
+[gui-exception-structure]:
+  https://guicommits.com/how-to-structure-exception-in-python-like-a-pro/
+[gui-logging-guidance]:
+  https://guicommits.com/how-to-log-in-python-like-a-pro/
