@@ -77,7 +77,8 @@ ______________________________________________________________________
 - CLI wrapper: `pylint-pypy`.
 - PyPy-only patch guard using `sys.implementation.name`.
 - Version guard for Pylint 4.x and Astroid 4.x.
-- `STRICT=1` mode for failing fast on unsupported Pylint or Astroid versions.
+- `PYLINT_PYPY_SHIM_STRICT=1` mode for failing fast on unsupported Pylint or
+  Astroid versions.
 - Focused unit and behaviour tests for the PyPy Astroid edge cases.
 
 ______________________________________________________________________
@@ -90,11 +91,11 @@ ______________________________________________________________________
 | CPython 3.11+ | `>=4,<5`       | `>=4,<5`       | Patch is skipped                |
 | PyPy 3.11     | Other versions | Other versions | Patch is skipped with a warning |
 
-Set `STRICT=1` to make unsupported Pylint or Astroid versions fail fast instead
-of logging a warning and continuing without the patch:
+Set `PYLINT_PYPY_SHIM_STRICT=1` to make unsupported Pylint or Astroid versions
+fail fast instead of logging a warning and continuing without the patch:
 
 ```bash
-STRICT=1 pylint-pypy your_package
+PYLINT_PYPY_SHIM_STRICT=1 pylint-pypy your_package
 ```
 
 ______________________________________________________________________

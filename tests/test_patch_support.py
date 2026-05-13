@@ -6,9 +6,10 @@ import builtins
 import dataclasses
 import typing as typ
 
-import pytest
-
 from pylint_pypy_shim import _patch
+
+if typ.TYPE_CHECKING:
+    import pytest
 
 
 class FakeClassDef:
@@ -31,7 +32,7 @@ class FakeConst(FakeNodeNG):
         self.value = value
 
 
-class FakeNode(_patch._AstroidNode):
+class FakeNode:
     """Minimal Astroid node stand-in for local helper tests."""
 
     def __init__(self) -> None:
@@ -44,7 +45,7 @@ class FakeNode(_patch._AstroidNode):
         self.locals.setdefault(name, []).append(child_node)
 
 
-class FakeBuilder(_patch._InspectBuilder):
+class FakeBuilder:
     """Minimal InspectBuilder stand-in for local helper tests."""
 
     def __init__(self) -> None:
@@ -55,7 +56,7 @@ class FakeBuilder(_patch._InspectBuilder):
 
     def imported_member(
         self,
-        node: _patch._AstroidNode,
+        node: object,
         member: object,
         alias: str,
     ) -> bool:
@@ -72,47 +73,14 @@ class FakeBuilder(_patch._InspectBuilder):
 _ORIGINAL_FAKE_BUILDER_OBJECT_BUILD = FakeBuilder.object_build
 
 
-@pytest.fixture(autouse=True)
-def reset_fake_astroid_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Reset patched Astroid stand-ins so tests do not depend on order."""
-    monkeypatch.setattr(
-        FakeBuilder,
-        "object_build",
-        _ORIGINAL_FAKE_BUILDER_OBJECT_BUILD,
-    )
+def as_astroid_node(node: FakeNode) -> _patch.nodes.Module | _patch.nodes.ClassDef:
+    """Type-cast a fake node to the Astroid node surface under test."""
+    return typ.cast("_patch.nodes.Module | _patch.nodes.ClassDef", node)
 
-    class FreshFakeBuilder(FakeBuilder):
-        """Fresh InspectBuilder stand-in for per-test monkeypatch isolation."""
 
-    monkeypatch.setattr(_patch.node_classes, "CONST_CLS", (str, int, float, bool))
-    monkeypatch.setattr(_patch.nodes, "Module", FakeModule)
-    monkeypatch.setattr(_patch.nodes, "ClassDef", FakeClassDef)
-    monkeypatch.setattr(_patch.nodes, "NodeNG", FakeNodeNG)
-    monkeypatch.setattr(_patch.nodes, "Const", FakeConst)
-    monkeypatch.setattr(_patch.nodes, "const_factory", FakeConst)
-    monkeypatch.setattr(_patch.raw_building, "InspectBuilder", FreshFakeBuilder)
-    monkeypatch.setattr(_patch, "IS_PYPY", False)
-    monkeypatch.setattr(_patch, "_PATCH_INSTALLED", False)
-    monkeypatch.setattr(
-        _patch, "_build_from_function", lambda node, member, mod: object()
-    )
-    monkeypatch.setattr(_patch, "_safe_has_attribute", hasattr)
-    monkeypatch.setattr(_patch, "attach_dummy_node", lambda node, alias: None)
-    monkeypatch.setattr(_patch, "build_dummy", lambda member: object())
-    monkeypatch.setattr(_patch, "build_module", lambda alias: FakeModule())
-    monkeypatch.setattr(
-        _patch, "object_build_class", lambda node, member: FakeClassDef()
-    )
-    monkeypatch.setattr(
-        _patch,
-        "object_build_datadescriptor",
-        lambda node, member: object(),
-    )
-    monkeypatch.setattr(
-        _patch,
-        "object_build_methoddescriptor",
-        lambda node, member: object(),
-    )
+def as_inspect_builder(builder: FakeBuilder) -> _patch.raw_building.InspectBuilder:
+    """Type-cast a fake builder to the Astroid builder surface under test."""
+    return typ.cast("_patch.raw_building.InspectBuilder", builder)
 
 
 class ObjectBuildScenario:
@@ -122,7 +90,7 @@ class ObjectBuildScenario:
         """Initialise a fresh routing scenario."""
         self.builder = FakeBuilder()
         self.node = FakeNode()
-        self.target = object()
+        self.target = type("Target", (), {})
         self.pypy_child = object()
         self.ordinary_child = object()
 
@@ -237,10 +205,14 @@ def setup_fake_dependencies(
 def run_object_builder(
     builder: FakeBuilder,
     node: FakeNode,
-    target: object,
+    target: type,
 ) -> None:
     """Run the patched object builder with the provided test doubles."""
-    _patch._object_build_without_pypy_descriptor_aliases(builder, node, target)
+    _patch._object_build_without_pypy_descriptor_aliases(
+        as_inspect_builder(builder),
+        as_astroid_node(node),
+        target,
+    )
 
 
 def assert_builder_outcome(
