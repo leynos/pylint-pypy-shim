@@ -759,7 +759,7 @@ def test_install_patch_raises_for_unsupported_versions_in_strict_mode(
     monkeypatch.setenv("PYLINT_PYPY_SHIM_STRICT", " 1 ")
     original_object_build = _patch.raw_building.InspectBuilder.object_build
 
-    with pytest.raises(RuntimeError, match="unsupported versions"):
+    with pytest.raises(_patch.PatchError, match="unsupported versions"):
         _patch.install_patch()
 
     assert _patch._PATCH_INSTALLED is False
@@ -793,7 +793,7 @@ def test_validate_astroid_shape_requires_inspect_builder(
 
     with (
         caplog.at_level(logging.ERROR),
-        pytest.raises(RuntimeError, match="InspectBuilder"),
+        pytest.raises(_patch.PatchError, match="InspectBuilder"),
     ):
         _patch._validate_astroid_shape()
 
@@ -807,7 +807,13 @@ def test_validate_astroid_shape_requires_callable_object_build(
     """Astroid shape validation rejects non-callable object_build attributes."""
     monkeypatch.setattr(_patch.raw_building.InspectBuilder, "object_build", None)
 
-    with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError, match="callable"):
+    with (
+        caplog.at_level(logging.ERROR),
+        pytest.raises(
+            _patch.PatchError,
+            match="callable",
+        ),
+    ):
         _patch._validate_astroid_shape()
 
     assert "object_build must be callable" in caplog.text
@@ -826,7 +832,13 @@ def test_validate_astroid_shape_rejects_unsupported_signature(
         _patch.raw_building.InspectBuilder, "object_build", object_build
     )
 
-    with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError, match="signature"):
+    with (
+        caplog.at_level(logging.ERROR),
+        pytest.raises(
+            _patch.PatchError,
+            match="signature",
+        ),
+    ):
         _patch._validate_astroid_shape()
 
     assert "signature is unsupported" in caplog.text

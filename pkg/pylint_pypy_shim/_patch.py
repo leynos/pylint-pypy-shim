@@ -317,7 +317,7 @@ def _handle_unsupported_versions(
     )
     if _is_strict_mode_enabled():
         logger.error(message)
-        raise RuntimeError(message)
+        raise PatchError(message)
     logger.warning(message)
 
 
@@ -332,14 +332,14 @@ def _validate_astroid_shape(logger: logging.Logger | None = None) -> None:
     if not hasattr(raw_building, "InspectBuilder"):
         message = "astroid.raw_building.InspectBuilder is required"
         active_logger.error(message)
-        raise RuntimeError(message)
+        raise PatchError(message)
     object_build = getattr(raw_building.InspectBuilder, "object_build", None)
     if not callable(object_build):
         message = "InspectBuilder.object_build must be callable"
         active_logger.error(message)
-        raise RuntimeError(message)  # noqa: TRY004
+        raise PatchError(message)
     signature = inspect.signature(object_build)
     if tuple(signature.parameters)[:3] != ("self", "node", "obj"):
         message = "InspectBuilder.object_build signature is unsupported"
         active_logger.error("%s: %s", message, signature)
-        raise RuntimeError(message)
+        raise PatchError(message)
