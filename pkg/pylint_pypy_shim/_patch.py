@@ -68,6 +68,7 @@ if typ.TYPE_CHECKING:
 
 _IGNORED_GETATTR_ERRORS = (AttributeError, TypeError)
 _STRICT_ENV_VAR = "PYLINT_PYPY_SHIM_STRICT"
+_LOG = logging.getLogger(__name__)
 _PATCH_LOCK = threading.Lock()
 _PATCH_INSTALLED = False
 _METRICS: collections.Counter[str] = collections.Counter()
@@ -215,6 +216,11 @@ def _resolve_member(
         member = getattr(obj, alias)
     except _IGNORED_GETATTR_ERRORS as error:
         _record_metric("resolve.getattr_failure")
+        _LOG.debug(
+            "astroid getattr failed on %r for alias %r; treating as skip",
+            obj,
+            alias,
+        )
         if logger is not None:
             logger.debug("Skipping %r from %r: %s", alias, obj, error)
         return None, pypy__class_getitem__, True
@@ -261,7 +267,7 @@ def _object_build_without_pypy_descriptor_aliases(
 
 def install_patch(logger: logging.Logger | None = None) -> None:
     """Install the PyPy Astroid object-build patch when versions are supported."""
-    active_logger = logger or logging.getLogger(__name__)
+    active_logger = logger or _LOG
     if sys.implementation.name != "pypy":
         active_logger.debug("Skipping PyPy Astroid object_build patch on non-PyPy")
         return
@@ -294,6 +300,7 @@ def install_patch(logger: logging.Logger | None = None) -> None:
             "typ.Any", raw_building.InspectBuilder
         ).object_build = _object_build_without_pypy_descriptor_aliases
         _PATCH_INSTALLED = True
+        _LOG.info("astroid InspectBuilder.object_build patched for PyPy")
 
 
 def _is_supported_version(version: str, minimum: int, maximum: int) -> bool:
