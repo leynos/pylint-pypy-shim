@@ -105,7 +105,7 @@ def _build_builtin_child(
     _record_metric("dispatch.builtin")
     return object_build_methoddescriptor(
         node,
-        member,  # type: ignore[invalid-argument-type]
+        typ.cast("typ.Any", member),
     )
 
 
@@ -178,7 +178,7 @@ def _dispatch_member_to_child(
             _record_metric("dispatch.data_descriptor")
             child = object_build_datadescriptor(
                 node,
-                member,  # type: ignore[invalid-argument-type]
+                typ.cast("type", member),
             )
         case _ if isinstance(member, tuple(node_classes.CONST_CLS)):
             logger.debug("Dispatching %s as const member of %r", alias, node)
@@ -189,13 +189,13 @@ def _dispatch_member_to_child(
             child = _build_from_function(
                 node,
                 member,
-                self._module,  # type: ignore[invalid-argument-type]
+                typ.cast("typ.Any", self._module),
             )
         case _ if _safe_has_attribute(member, "__all__"):
             logger.debug("Dispatching %s as module-like member of %r", alias, node)
             _record_metric("dispatch.module_like")
             child = build_module(alias)
-            self.object_build(child, member)  # type: ignore[invalid-argument-type]
+            self.object_build(child, typ.cast("types.ModuleType | type", member))
         case _:
             logger.debug("Dispatching %s as dummy member of %r", alias, node)
             _record_metric("dispatch.dummy")
@@ -290,9 +290,9 @@ def install_patch(logger: logging.Logger | None = None) -> None:
             pylint_version,
             astroid_version,
         )
-        raw_building.InspectBuilder.object_build = (  # type: ignore[invalid-assignment]
-            _object_build_without_pypy_descriptor_aliases
-        )
+        typ.cast(
+            "typ.Any", raw_building.InspectBuilder
+        ).object_build = _object_build_without_pypy_descriptor_aliases
         _PATCH_INSTALLED = True
 
 
