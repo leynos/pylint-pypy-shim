@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import collections
+
 import pytest
 
 from pylint_pypy_shim import _patch
@@ -37,6 +39,7 @@ def reset_fake_astroid_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_patch.raw_building, "InspectBuilder", FreshFakeBuilder)
     monkeypatch.setattr(_patch, "IS_PYPY", False)
     monkeypatch.setattr(_patch, "_PATCH_INSTALLED", False)
+    monkeypatch.setattr(_patch, "_METRICS", collections.Counter())
     monkeypatch.setattr(
         _patch, "_build_from_function", lambda node, member, mod: object()
     )

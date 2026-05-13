@@ -17,6 +17,7 @@ dev = [
     "pytest",
     "pytest-bdd",
     "ruff",
+    "syrupy",
     "pyright",
     "pytest-timeout",
     "pytest-xdist",

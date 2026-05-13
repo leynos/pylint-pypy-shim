@@ -41,6 +41,7 @@ Astroid unchanged unless strict mode is enabled.
 
 from __future__ import annotations
 
+import collections
 import inspect
 import logging
 import os
@@ -69,6 +70,7 @@ _IGNORED_GETATTR_ERRORS = (AttributeError, TypeError)
 _STRICT_ENV_VAR = "PYLINT_PYPY_SHIM_STRICT"
 _PATCH_LOCK = threading.Lock()
 _PATCH_INSTALLED = False
+_METRICS: collections.Counter[str] = collections.Counter()
 
 
 class PatchError(RuntimeError):
@@ -80,6 +82,16 @@ def _cached_child_type_error(member: object, child: object) -> str:
     return f"_done entry for {member!r} must be a ClassDef, got {type(child).__name__}"
 
 
+def get_metrics() -> collections.Counter[str]:
+    """Return a snapshot of patch routing and resolution counters."""
+    return _METRICS.copy()
+
+
+def _record_metric(name: str) -> None:
+    """Increment an internal diagnostic counter."""
+    _METRICS[name] += 1
+
+
 def _build_builtin_child(
     self: raw_building.InspectBuilder,
     node: nodes.Module | nodes.ClassDef,
@@ -88,7 +100,9 @@ def _build_builtin_child(
 ) -> nodes.NodeNG | None:
     """Build a child for builtins unless Astroid treats it as imported."""
     if self.imported_member(node, member, alias):
+        _record_metric("dispatch.imported")
         return None
+    _record_metric("dispatch.builtin")
     return object_build_methoddescriptor(
         node,
         member,  # type: ignore[invalid-argument-type]
@@ -103,12 +117,15 @@ def _build_class_child(
 ) -> nodes.ClassDef | None:
     """Build or reuse a class child unless Astroid treats it as imported."""
     if self.imported_member(node, member, alias):
+        _record_metric("dispatch.imported")
         return None
     if member in self._done:
         child = self._done[member]
         if not isinstance(child, nodes.ClassDef):
             raise PatchError(_cached_child_type_error(member, child))
+        _record_metric("dispatch.class.cached")
         return child
+    _record_metric("dispatch.class.built")
     child = object_build_class(node, member)
     self.object_build(child, member)
     return child
@@ -121,7 +138,9 @@ def _build_const_child(
 ) -> nodes.NodeNG | None:
     """Build a const child unless the alias is already a special attribute."""
     if alias in node.special_attributes:
+        _record_metric("dispatch.const.special")
         return None
+    _record_metric("dispatch.const")
     return nodes.const_factory(member)  # type: ignore[invalid-return-type]
 
 
@@ -142,30 +161,44 @@ def _dispatch_member_to_child(
     alias: str,
 ) -> nodes.NodeNG | None:
     """Dispatch members to the matching Astroid builder."""
+    logger = logging.getLogger(__name__)
     match member:
         case _ if inspect.isbuiltin(member):
+            logger.debug("Dispatching %s as builtin member of %r", alias, node)
             child = _build_builtin_child(self, node, member, alias)
         case _ if inspect.isclass(member):
+            logger.debug("Dispatching %s as class member of %r", alias, node)
             child = _build_class_child(self, node, member, alias)
         case _ if inspect.ismethoddescriptor(member):
+            logger.debug("Dispatching %s as method descriptor of %r", alias, node)
+            _record_metric("dispatch.method_descriptor")
             child = object_build_methoddescriptor(node, member)
         case _ if inspect.isdatadescriptor(member):
+            logger.debug("Dispatching %s as data descriptor of %r", alias, node)
+            _record_metric("dispatch.data_descriptor")
             child = object_build_datadescriptor(
                 node,
                 member,  # type: ignore[invalid-argument-type]
             )
         case _ if isinstance(member, tuple(node_classes.CONST_CLS)):
+            logger.debug("Dispatching %s as const member of %r", alias, node)
             child = _build_const_child(node, member, alias)
         case _ if inspect.isroutine(member):
+            logger.debug("Dispatching %s as routine member of %r", alias, node)
+            _record_metric("dispatch.routine")
             child = _build_from_function(
                 node,
                 member,
                 self._module,  # type: ignore[invalid-argument-type]
             )
         case _ if _safe_has_attribute(member, "__all__"):
+            logger.debug("Dispatching %s as module-like member of %r", alias, node)
+            _record_metric("dispatch.module_like")
             child = build_module(alias)
             self.object_build(child, member)  # type: ignore[invalid-argument-type]
         case _:
+            logger.debug("Dispatching %s as dummy member of %r", alias, node)
+            _record_metric("dispatch.dummy")
             child = build_dummy(member)
     return child
 
@@ -181,11 +214,14 @@ def _resolve_member(
     try:
         member = getattr(obj, alias)
     except _IGNORED_GETATTR_ERRORS as error:
+        _record_metric("resolve.getattr_failure")
         if logger is not None:
             logger.debug("Skipping %r from %r: %s", alias, obj, error)
         return None, pypy__class_getitem__, True
     if inspect.ismethod(member) and not pypy__class_getitem__:
         member = member.__func__
+        _record_metric("resolve.bound_method_unwrapped")
+    _record_metric("resolve.success")
     return member, pypy__class_getitem__, False
 
 
@@ -203,14 +239,19 @@ def _object_build_without_pypy_descriptor_aliases(
         warnings.simplefilter("ignore")
         for alias in dir(obj):
             if not isinstance(alias, str):
+                _record_metric("resolve.non_string_dir_entry")
+                logger.debug("Ignoring non-string dir entry %r from %r", alias, obj)
                 continue
             member, pypy__class_getitem__, skip = _resolve_member(
                 node, obj, alias, logger
             )
             if skip:
+                _record_metric("dispatch.dummy.getattr_failure")
+                logger.debug("Attaching dummy node for skipped %s from %r", alias, obj)
                 attach_dummy_node(node, alias)
                 continue
             if pypy__class_getitem__:
+                logger.debug("Dispatching %s through PyPy builtin path", alias)
                 child = _build_builtin_child(self, node, member, alias)
             else:
                 child = _dispatch_member_to_child(self, node, member, alias)

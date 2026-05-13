@@ -433,6 +433,7 @@ def test_dispatch_member_to_child_routes_all_exporting_members(
 
 def test_dispatch_member_to_child_uses_dummy_fallback(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Unknown member types are represented by a dummy child."""
     builder = FakeBuilder()
@@ -447,15 +448,18 @@ def test_dispatch_member_to_child_uses_dummy_fallback(
 
     monkeypatch.setattr(_patch, "build_dummy", fake_build_dummy)
 
-    result = _patch._dispatch_member_to_child(
-        as_inspect_builder(builder),
-        as_astroid_node(node),
-        member,
-        "child",
-    )
+    with caplog.at_level(logging.DEBUG):
+        result = _patch._dispatch_member_to_child(
+            as_inspect_builder(builder),
+            as_astroid_node(node),
+            member,
+            "child",
+        )
 
     assert result is child
     assert calls == [member]
+    assert _patch.get_metrics()["dispatch.dummy"] == 1
+    assert "Dispatching child as dummy member" in caplog.text
 
 
 def test_attach_child_node_avoids_duplicate_locals() -> None:
