@@ -15,6 +15,10 @@ The runtime package lives under `pkg/pylint_pypy_shim/`:
 - `plugin.py` exposes the Pylint plugin `register(...)` entry point.
 - `cli.py` exposes the `pylint-pypy` wrapper.
 
+The repository root also contains `tools/pylint_pypy.py`, a source-tree
+compatibility wrapper used by subprocess smoke tests and local checkout runs.
+It bootstraps `pkg/` onto `sys.path` before importing `pylint_pypy_shim.cli`.
+
 Tests live under `tests/`. Behaviour tests use `pytest-bdd` features in
 `tests/features/` and step definitions in `tests/steps/`.
 
@@ -65,11 +69,17 @@ Operational logging boundaries:
 
 - non-PyPy runtime: debug log and no-op;
 - unsupported versions: warning, or error plus `RuntimeError` in strict mode;
-- successful patch installation: info;
+- successful patch installation: info log for the patch event and a second
+  info log with the active Pylint version, Astroid version, and runtime;
 - repeated installation: debug;
 - ignored member-resolution failures: debug;
 - legacy Pylint CLI API fallback: debug;
 - non-integer legacy `SystemExit.code`: warning.
+
+`_patch.py` owns the module-level `_LOG` logger. Public callers may pass a
+logger into `install_patch(...)`; when they do not, the installer falls back to
+`_LOG`. Helper paths that accept a logger should keep using the injected logger
+for request-specific context and `_LOG` only for module-level events.
 
 ## State and concurrency
 
@@ -97,6 +107,7 @@ mirror Astroid's internal dispatch. Keep these categories in place:
 - object-builder cache behaviour;
 - PyPy compatibility invariants, including property tests for non-string
   `dir()` entries and supported `getattr` failures;
+- source-tree wrapper behaviour for `tools/pylint_pypy.py`;
 - behaviour tests proving the CLI propagates both success and failure statuses.
 
 Run the normal project gates before committing:

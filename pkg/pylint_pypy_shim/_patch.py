@@ -300,8 +300,8 @@ def install_patch(logger: logging.Logger | None = None) -> None:
             "typ.Any", raw_building.InspectBuilder
         ).object_build = _object_build_without_pypy_descriptor_aliases
         _PATCH_INSTALLED = True
-        _LOG.info("astroid InspectBuilder.object_build patched for PyPy")
-        _LOG.info(
+        active_logger.info("astroid InspectBuilder.object_build patched for PyPy")
+        active_logger.info(
             "pylint=%s astroid=%s runtime=%s",
             pylint_version,
             astroid_version,

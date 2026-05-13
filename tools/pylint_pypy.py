@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from pylint_pypy_shim.cli import main
+import pathlib
+import sys
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+_PKG_ROOT = _REPO_ROOT / "pkg"
+sys.path.insert(0, str(_PKG_ROOT))
+
+from pylint_pypy_shim.cli import main  # noqa: E402
 
 if __name__ == "__main__":
     raise SystemExit(main())

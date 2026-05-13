@@ -1,0 +1,8 @@
+# serializer version: 1
+# name: test_install_patch_patches_supported_pypy
+  list([
+    'Installing PyPy Astroid object_build patch (pylint 4.0.5, astroid 4.0.4)',
+    'astroid InspectBuilder.object_build patched for PyPy',
+    'pylint=4.0.5 astroid=4.0.4 runtime=pypy',
+  ])
+# ---

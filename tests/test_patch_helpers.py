@@ -28,6 +28,9 @@ from .test_patch_support import (
     setup_fake_dependencies,
 )
 
+if typ.TYPE_CHECKING:
+    from syrupy.assertion import SnapshotAssertion
+
 
 class _ClassWithClassMethod:
     @classmethod
@@ -675,6 +678,7 @@ def test_install_patch_skips_non_pypy(
 def test_install_patch_patches_supported_pypy(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    snapshot: SnapshotAssertion,
 ) -> None:
     """Supported PyPy installs the object_build patch."""
     monkeypatch.setattr(_patch.sys.implementation, "name", "pypy", raising=False)
@@ -686,6 +690,13 @@ def test_install_patch_patches_supported_pypy(
     assert _patch._PATCH_INSTALLED is True
     assert _patch.raw_building.InspectBuilder.object_build is not original_object_build
     assert "Installing PyPy Astroid object_build patch" in caplog.text
+    assert "astroid InspectBuilder.object_build patched for PyPy" in caplog.text
+    assert "pylint=4.0.5 astroid=4.0.4 runtime=pypy" in caplog.text
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.INFO
+    ] == snapshot
 
 
 def test_install_patch_is_idempotent_on_supported_pypy(
