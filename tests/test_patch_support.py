@@ -65,9 +65,9 @@ class FakeBuilder:
         del node, member, alias
         return False
 
-    def object_build(self, child: object, member: object) -> None:
+    def object_build(self, node: object, obj: object) -> None:
         """Record recursive object-build calls."""
-        self.object_build_calls.append((child, member))
+        self.object_build_calls.append((node, obj))
 
 
 _ORIGINAL_FAKE_BUILDER_OBJECT_BUILD = FakeBuilder.object_build

@@ -6,6 +6,7 @@ import inspect
 import logging
 import os
 import sys
+import threading
 import typing as typ
 import warnings
 
@@ -26,6 +27,8 @@ if typ.TYPE_CHECKING:
     import types
 
 _IGNORED_GETATTR_ERRORS = (AttributeError, TypeError)
+_STRICT_ENV_VAR = "PYLINT_PYPY_SHIM_STRICT"
+_PATCH_LOCK = threading.Lock()
 _PATCH_INSTALLED = False
 
 
@@ -135,9 +138,7 @@ def _resolve_member(
     del node
     pypy__class_getitem__ = IS_PYPY and alias == "__class_getitem__"
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            member = getattr(obj, alias)
+        member = getattr(obj, alias)
     except _IGNORED_GETATTR_ERRORS as error:
         if logger is not None:
             logger.debug("Skipping %r from %r: %s", alias, obj, error)
@@ -157,19 +158,23 @@ def _object_build_without_pypy_descriptor_aliases(
         return
     self._done[obj] = node
     logger = logging.getLogger(__name__)
-    for alias in dir(obj):
-        if not isinstance(alias, str):
-            continue
-        member, pypy__class_getitem__, skip = _resolve_member(node, obj, alias, logger)
-        if skip:
-            attach_dummy_node(node, alias)
-            continue
-        if pypy__class_getitem__:
-            child = _build_builtin_child(self, node, member, alias)
-        else:
-            child = _dispatch_member_to_child(self, node, member, alias)
-        if child is not None:
-            _attach_child_node(node, alias, child)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for alias in dir(obj):
+            if not isinstance(alias, str):
+                continue
+            member, pypy__class_getitem__, skip = _resolve_member(
+                node, obj, alias, logger
+            )
+            if skip:
+                attach_dummy_node(node, alias)
+                continue
+            if pypy__class_getitem__:
+                child = _build_builtin_child(self, node, member, alias)
+            else:
+                child = _dispatch_member_to_child(self, node, member, alias)
+            if child is not None:
+                _attach_child_node(node, alias, child)
 
 
 def install_patch(logger: logging.Logger | None = None) -> None:
@@ -192,20 +197,21 @@ def install_patch(logger: logging.Logger | None = None) -> None:
         _handle_unsupported_versions(active_logger, pylint_version, astroid_version)
         return
 
-    _validate_astroid_shape()
     global _PATCH_INSTALLED
-    if _PATCH_INSTALLED:
-        active_logger.debug("PyPy Astroid object_build patch already installed")
-        return
-    active_logger.info(
-        "Installing PyPy Astroid object_build patch (pylint %s, astroid %s)",
-        pylint_version,
-        astroid_version,
-    )
-    raw_building.InspectBuilder.object_build = (  # ty: ignore[invalid-assignment]
-        _object_build_without_pypy_descriptor_aliases
-    )
-    _PATCH_INSTALLED = True
+    with _PATCH_LOCK:
+        _validate_astroid_shape(active_logger)
+        if _PATCH_INSTALLED:
+            active_logger.debug("PyPy Astroid object_build patch already installed")
+            return
+        active_logger.info(
+            "Installing PyPy Astroid object_build patch (pylint %s, astroid %s)",
+            pylint_version,
+            astroid_version,
+        )
+        raw_building.InspectBuilder.object_build = (  # ty: ignore[invalid-assignment]
+            _object_build_without_pypy_descriptor_aliases
+        )
+        _PATCH_INSTALLED = True
 
 
 def _is_supported_version(version: str, minimum: int, maximum: int) -> bool:
@@ -227,16 +233,31 @@ def _handle_unsupported_versions(
         "Skipping PyPy Astroid object_build patch for unsupported versions "
         f"(pylint {pylint_version}, astroid {astroid_version})"
     )
-    if os.environ.get("PYLINT_PYPY_SHIM_STRICT"):
+    if _is_strict_mode_enabled():
+        logger.error(message)
         raise RuntimeError(message)
     logger.warning(message)
 
 
-def _validate_astroid_shape() -> None:
-    """Assert that Astroid still exposes the inspected patch target."""
-    assert hasattr(raw_building, "InspectBuilder"), (  # noqa: S101
-        "astroid.raw_building.InspectBuilder is required"
-    )
-    assert hasattr(raw_building.InspectBuilder, "object_build"), (  # noqa: S101
-        "InspectBuilder.object_build is required"
-    )
+def _is_strict_mode_enabled() -> bool:
+    """Return whether package-specific strict mode is explicitly enabled."""
+    return os.environ.get(_STRICT_ENV_VAR) == "1"
+
+
+def _validate_astroid_shape(logger: logging.Logger | None = None) -> None:
+    """Validate that Astroid still exposes the inspected patch target."""
+    active_logger = logger or logging.getLogger(__name__)
+    if not hasattr(raw_building, "InspectBuilder"):
+        message = "astroid.raw_building.InspectBuilder is required"
+        active_logger.error(message)
+        raise RuntimeError(message)
+    object_build = getattr(raw_building.InspectBuilder, "object_build", None)
+    if not callable(object_build):
+        message = "InspectBuilder.object_build must be callable"
+        active_logger.error(message)
+        raise RuntimeError(message)  # noqa: TRY004
+    signature = inspect.signature(object_build)
+    if tuple(signature.parameters)[:3] != ("self", "node", "obj"):
+        message = "InspectBuilder.object_build signature is unsupported"
+        active_logger.error("%s: %s", message, signature)
+        raise RuntimeError(message)

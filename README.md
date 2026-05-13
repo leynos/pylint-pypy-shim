@@ -103,6 +103,8 @@ ______________________________________________________________________
 ## Learn more
 
 - [Users' Guide](docs/users-guide.md) — full project documentation
+- [Developers' Guide](docs/developers-guide.md) — internals and maintenance
+  workflow
 - [Scripting standards](docs/scripting-standards.md) — local scripting
   conventions
 - [Agent instructions](AGENTS.md) — contribution and validation expectations

@@ -722,6 +722,27 @@ def test_install_patch_warns_for_unsupported_versions(
     assert "unsupported versions" in caplog.text
 
 
+def test_install_patch_treats_non_one_strict_value_as_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Strict mode is enabled only by the explicit value ``1``."""
+    astroid = sys.modules["astroid"]
+    pylint = __import__("pylint")
+    monkeypatch.setattr(_patch.sys.implementation, "name", "pypy", raising=False)
+    monkeypatch.setattr(astroid, "__version__", "0.0.0")
+    monkeypatch.setattr(pylint, "__version__", "0.0.0")
+    monkeypatch.setenv("PYLINT_PYPY_SHIM_STRICT", "true")
+    original_object_build = _patch.raw_building.InspectBuilder.object_build
+
+    with caplog.at_level(logging.WARNING):
+        _patch.install_patch()
+
+    assert _patch._PATCH_INSTALLED is False
+    assert _patch.raw_building.InspectBuilder.object_build is original_object_build
+    assert "unsupported versions" in caplog.text
+
+
 def test_install_patch_raises_for_unsupported_versions_in_strict_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -739,3 +760,69 @@ def test_install_patch_raises_for_unsupported_versions_in_strict_mode(
 
     assert _patch._PATCH_INSTALLED is False
     assert _patch.raw_building.InspectBuilder.object_build is original_object_build
+
+
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [
+        ("4.0.0", True),
+        ("4.9.1", True),
+        ("3.9.9", False),
+        ("5.0.0", False),
+        ("x", False),
+    ],
+)
+def test_is_supported_version_validates_major_range(
+    version: str,
+    expected: object,
+) -> None:
+    """Version checks use the supported inclusive/exclusive major range."""
+    assert _patch._is_supported_version(version, 4, 5) is expected
+
+
+def test_validate_astroid_shape_requires_inspect_builder(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Astroid shape validation fails loudly when InspectBuilder is absent."""
+    monkeypatch.delattr(_patch.raw_building, "InspectBuilder")
+
+    with (
+        caplog.at_level(logging.ERROR),
+        pytest.raises(RuntimeError, match="InspectBuilder"),
+    ):
+        _patch._validate_astroid_shape()
+
+    assert "InspectBuilder is required" in caplog.text
+
+
+def test_validate_astroid_shape_requires_callable_object_build(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Astroid shape validation rejects non-callable object_build attributes."""
+    monkeypatch.setattr(_patch.raw_building.InspectBuilder, "object_build", None)
+
+    with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError, match="callable"):
+        _patch._validate_astroid_shape()
+
+    assert "object_build must be callable" in caplog.text
+
+
+def test_validate_astroid_shape_rejects_unsupported_signature(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Astroid shape validation checks the object_build signature."""
+
+    def object_build(self: object, child: object) -> None:
+        del self, child
+
+    monkeypatch.setattr(
+        _patch.raw_building.InspectBuilder, "object_build", object_build
+    )
+
+    with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError, match="signature"):
+        _patch._validate_astroid_shape()
+
+    assert "signature is unsupported" in caplog.text
