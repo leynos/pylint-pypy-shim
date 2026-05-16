@@ -10,6 +10,7 @@ _PKG_ROOT = _REPO_ROOT / "pkg"
 
 
 def _run_entrypoint() -> int:
+    """Bootstrap ``pkg/`` onto ``sys.path`` and delegate to ``cli.main``."""
     if str(_PKG_ROOT) not in sys.path:
         sys.path.insert(0, str(_PKG_ROOT))
 

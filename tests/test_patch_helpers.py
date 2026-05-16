@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import builtins
+import concurrent.futures
 import inspect
 import logging
+import re
 import sys
 import typing as typ
 
@@ -28,9 +30,6 @@ from .test_patch_support import (
     setup_fake_dependencies,
 )
 
-if typ.TYPE_CHECKING:
-    from syrupy.assertion import SnapshotAssertion
-
 
 class _ClassWithClassMethod:
     @classmethod
@@ -43,6 +42,9 @@ class _ClassWithClassGetItem:
     def __class_getitem__(cls, item: object) -> object:
         """Member used to verify the PyPy class-getitem exception."""
         return item
+
+
+_DISPATCH_LOGGER = logging.getLogger("tests.dispatch")
 
 
 def test_resolve_member_unwraps_bound_methods(
@@ -195,6 +197,7 @@ def test_dispatch_member_to_child_routes_builtins(
         as_astroid_node(node),
         len,
         "len",
+        _DISPATCH_LOGGER,
     )
 
     assert result is child, (
@@ -223,6 +226,7 @@ def test_dispatch_member_to_child_routes_classes_uncached(
         as_astroid_node(node),
         member,
         "sample",
+        _DISPATCH_LOGGER,
     )
 
     assert result is child
@@ -305,6 +309,7 @@ def test_dispatch_member_to_child_routes_method_descriptors(
         as_astroid_node(node),
         member,
         "upper",
+        _DISPATCH_LOGGER,
     )
 
     assert result is child
@@ -339,6 +344,7 @@ def test_dispatch_member_to_child_routes_data_descriptors(
         as_astroid_node(node),
         member,
         "answer",
+        _DISPATCH_LOGGER,
     )
 
     assert result is child
@@ -365,6 +371,7 @@ def test_dispatch_member_to_child_routes_constants() -> None:
         as_astroid_node(node),
         42,
         "answer",
+        _DISPATCH_LOGGER,
     )
 
     assert isinstance(result, FakeConst)
@@ -398,6 +405,7 @@ def test_dispatch_member_to_child_routes_routines(
         as_astroid_node(node),
         member,
         "member",
+        _DISPATCH_LOGGER,
     )
 
     assert result is child
@@ -425,6 +433,7 @@ def test_dispatch_member_to_child_routes_all_exporting_members(
         as_astroid_node(node),
         member,
         "module_like",
+        _DISPATCH_LOGGER,
     )
 
     assert result is child
@@ -455,12 +464,30 @@ def test_dispatch_member_to_child_uses_dummy_fallback(
             as_astroid_node(node),
             member,
             "child",
+            _DISPATCH_LOGGER,
         )
 
     assert result is child
     assert calls == [member]
     assert _patch.get_metrics()["dispatch.dummy"] == 1
     assert "Dispatching child as dummy member" in caplog.text
+
+
+def test_record_metric_counts_concurrent_increments() -> None:
+    """Metric increments remain consistent under concurrent callers."""
+    metric_name = "tests.concurrent_metric"
+    increment_count = 1_000
+    start_value = _patch.get_metrics()[metric_name]
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        list(
+            executor.map(
+                lambda _: _patch._record_metric(metric_name),
+                range(increment_count),
+            )
+        )
+
+    assert _patch.get_metrics()[metric_name] == start_value + increment_count
 
 
 def test_attach_child_node_avoids_duplicate_locals() -> None:
@@ -530,7 +557,7 @@ def test_object_build_ignores_non_string_dir_entries(
     monkeypatch.setattr(
         _patch,
         "_dispatch_member_to_child",
-        lambda builder_arg, node_arg, member, alias, logger=None: object(),
+        lambda builder_arg, node_arg, member, alias, logger: object(),
     )
 
     _patch._object_build_without_pypy_descriptor_aliases(
@@ -676,7 +703,6 @@ def test_install_patch_skips_non_pypy(
 def test_install_patch_patches_supported_pypy(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
-    snapshot: SnapshotAssertion,
 ) -> None:
     """Supported PyPy installs the object_build patch."""
     monkeypatch.setattr(_patch.sys.implementation, "name", "pypy", raising=False)
@@ -689,12 +715,22 @@ def test_install_patch_patches_supported_pypy(
     assert _patch.raw_building.InspectBuilder.object_build is not original_object_build
     assert "Installing PyPy Astroid object_build patch" in caplog.text
     assert "astroid InspectBuilder.object_build patched for PyPy" in caplog.text
-    assert "pylint=4.0.5 astroid=4.0.4 runtime=pypy" in caplog.text
-    assert [
+    info_messages = [
         record.getMessage()
         for record in caplog.records
         if record.levelno == logging.INFO
-    ] == snapshot
+    ]
+    assert len(info_messages) == 3
+    assert re.fullmatch(
+        r"Installing PyPy Astroid object_build patch "
+        r"\(pylint \d+\.\S+, astroid \d+\.\S+\)",
+        info_messages[0],
+    )
+    assert info_messages[1] == "astroid InspectBuilder.object_build patched for PyPy"
+    assert re.fullmatch(
+        r"pylint=\d+\.\S+ astroid=\d+\.\S+ runtime=pypy",
+        info_messages[2],
+    )
 
 
 def test_installed_object_builder_uses_injected_logger(

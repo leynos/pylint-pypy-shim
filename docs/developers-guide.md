@@ -44,6 +44,25 @@ The PyPy-specific behaviour is limited to two compatibility guards:
 - treat `AttributeError` and `TypeError` from `getattr(obj, alias)` as skipped
   members, leaving Astroid to attach a dummy node.
 
+### Logger binding
+
+`_active_logger(logger)` is the single authoritative logger-selection helper in
+`_patch.py`. It returns the caller-provided logger when one is supplied and
+falls back to the module-level `_LOG` logger otherwise.
+
+`_object_build_factory(logger)` is a closure factory that captures the selected
+logger at install time and returns the patched `object_build` method. This
+keeps the bound logger active after patch installation without storing it in
+additional module-level state.
+
+`_object_build_with_logger(self, node, obj, logger)` is the inner
+implementation delegate used by both the factory-produced closure and
+`_object_build_without_pypy_descriptor_aliases`. It accepts an explicit logger
+so per-alias debug messages route through the correct handler.
+
+Callers that pass a logger to `install_patch(...)` continue to receive debug
+and info messages from the patched builder after installation.
+
 ## Installation guard
 
 `install_patch(...)` applies the patch only when all of these conditions are
