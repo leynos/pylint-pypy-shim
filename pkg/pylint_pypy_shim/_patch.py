@@ -42,6 +42,7 @@ Astroid unchanged unless strict mode is enabled.
 from __future__ import annotations
 
 import collections
+import collections.abc as cabc
 import inspect
 import logging
 import os
@@ -68,7 +69,6 @@ if typ.TYPE_CHECKING:
 
 _IGNORED_GETATTR_ERRORS = (AttributeError, TypeError)
 _STRICT_ENV_VAR = "PYLINT_PYPY_SHIM_STRICT"
-_LOG = logging.getLogger(__name__)
 _PATCH_LOCK = threading.Lock()
 _PATCH_INSTALLED = False
 _METRICS: collections.Counter[str] = collections.Counter()
@@ -91,6 +91,11 @@ def get_metrics() -> collections.Counter[str]:
 def _record_metric(name: str) -> None:
     """Increment an internal diagnostic counter."""
     _METRICS[name] += 1
+
+
+def _active_logger(logger: logging.Logger | None = None) -> logging.Logger:
+    """Return the caller-provided logger or this module's default logger."""
+    return logger or logging.getLogger(__name__)
 
 
 def _build_builtin_child(
@@ -216,13 +221,7 @@ def _resolve_member(
         member = getattr(obj, alias)
     except _IGNORED_GETATTR_ERRORS as error:
         _record_metric("resolve.getattr_failure")
-        _LOG.debug(
-            "astroid getattr failed on %r for alias %r; treating as skip",
-            obj,
-            alias,
-        )
-        if logger is not None:
-            logger.debug("Skipping %r from %r: %s", alias, obj, error)
+        _active_logger(logger).debug("Skipping %r from %r: %s", alias, obj, error)
         return None, pypy__class_getitem__, True
     if inspect.ismethod(member) and not pypy__class_getitem__:
         member = member.__func__
@@ -237,10 +236,19 @@ def _object_build_without_pypy_descriptor_aliases(
     obj: types.ModuleType | type,
 ) -> None:
     """Build Astroid nodes while ignoring non-string PyPy ``dir()`` entries."""
+    _object_build_with_logger(self, node, obj, logging.getLogger(__name__))
+
+
+def _object_build_with_logger(
+    self: raw_building.InspectBuilder,
+    node: nodes.Module | nodes.ClassDef,
+    obj: types.ModuleType | type,
+    logger: logging.Logger,
+) -> None:
+    """Build Astroid nodes with the logger selected during patch installation."""
     if obj in self._done:
         return
     self._done[obj] = node
-    logger = logging.getLogger(__name__)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         for alias in dir(obj):
@@ -265,9 +273,31 @@ def _object_build_without_pypy_descriptor_aliases(
                 _attach_child_node(node, alias, child)
 
 
+def _object_build_factory(
+    logger: logging.Logger,
+) -> cabc.Callable[
+    [
+        raw_building.InspectBuilder,
+        nodes.Module | nodes.ClassDef,
+        types.ModuleType | type,
+    ],
+    None,
+]:
+    """Create an Astroid object builder bound to *logger*."""
+
+    def object_build(
+        self: raw_building.InspectBuilder,
+        node: nodes.Module | nodes.ClassDef,
+        obj: types.ModuleType | type,
+    ) -> None:
+        _object_build_with_logger(self, node, obj, logger)
+
+    return object_build
+
+
 def install_patch(logger: logging.Logger | None = None) -> None:
     """Install the PyPy Astroid object-build patch when versions are supported."""
-    active_logger = logger or _LOG
+    active_logger = _active_logger(logger)
     if sys.implementation.name != "pypy":
         active_logger.debug("Skipping PyPy Astroid object_build patch on non-PyPy")
         return
@@ -298,7 +328,7 @@ def install_patch(logger: logging.Logger | None = None) -> None:
         )
         typ.cast(
             "typ.Any", raw_building.InspectBuilder
-        ).object_build = _object_build_without_pypy_descriptor_aliases
+        ).object_build = _object_build_factory(active_logger)
         _PATCH_INSTALLED = True
         active_logger.info("astroid InspectBuilder.object_build patched for PyPy")
         active_logger.info(

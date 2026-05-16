@@ -135,13 +135,11 @@ def test_resolve_member_logs_getattr_failures(
         def __getattr__(self, name: str) -> object:
             raise exception_type(name)
 
-    logger = logging.getLogger("tests.resolve-member")
-    with caplog.at_level(logging.DEBUG, logger=logger.name):
+    with caplog.at_level(logging.DEBUG, logger=_patch.__name__):
         member, is_pypy_class_getitem, should_skip = _patch._resolve_member(
             as_astroid_node(FakeNode()),
             FailingAttribute(),
             "missing",
-            logger,
         )
 
     assert member is None
@@ -697,6 +695,34 @@ def test_install_patch_patches_supported_pypy(
         for record in caplog.records
         if record.levelno == logging.INFO
     ] == snapshot
+
+
+def test_installed_object_builder_uses_injected_logger(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The installed object builder uses the logger passed to install_patch."""
+
+    class FailingTarget:
+        def __dir__(self) -> list[str]:
+            return ["missing"]
+
+        def __getattr__(self, name: str) -> object:
+            raise AttributeError(name)
+
+    monkeypatch.setattr(_patch.sys.implementation, "name", "pypy", raising=False)
+    logger = logging.getLogger("tests.installed-object-build")
+    _patch.install_patch(logger)
+    builder_factory = typ.cast("typ.Any", _patch.raw_building.InspectBuilder)
+    builder = builder_factory()
+    node = FakeNode()
+
+    with caplog.at_level(logging.DEBUG, logger=logger.name):
+        builder.object_build(
+            as_astroid_node(node), typ.cast("typ.Any", FailingTarget())
+        )
+
+    assert "Skipping 'missing'" in caplog.text
 
 
 def test_install_patch_is_idempotent_on_supported_pypy(
