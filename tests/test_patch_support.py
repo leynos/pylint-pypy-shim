@@ -164,8 +164,9 @@ def make_routing_spies(scenario: ObjectBuildScenario) -> RoutingSpies:
         node_arg: object,
         member: object,
         alias: str,
+        logger: object | None = None,
     ) -> object:
-        del member
+        del member, logger
         assert builder_arg is scenario.builder, (
             "builder argument must be forwarded unchanged"
         )

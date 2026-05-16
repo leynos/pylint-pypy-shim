@@ -530,7 +530,7 @@ def test_object_build_ignores_non_string_dir_entries(
     monkeypatch.setattr(
         _patch,
         "_dispatch_member_to_child",
-        lambda builder_arg, node_arg, member, alias: object(),
+        lambda builder_arg, node_arg, member, alias, logger=None: object(),
     )
 
     _patch._object_build_without_pypy_descriptor_aliases(
@@ -705,9 +705,11 @@ def test_installed_object_builder_uses_injected_logger(
 
     class FailingTarget:
         def __dir__(self) -> list[str]:
-            return ["missing"]
+            return ["existing", "missing"]
 
         def __getattr__(self, name: str) -> object:
+            if name == "existing":
+                return object()
             raise AttributeError(name)
 
     monkeypatch.setattr(_patch.sys.implementation, "name", "pypy", raising=False)
@@ -723,6 +725,7 @@ def test_installed_object_builder_uses_injected_logger(
         )
 
     assert "Skipping 'missing'" in caplog.text
+    assert "Dispatching existing as dummy member" in caplog.text
 
 
 def test_install_patch_is_idempotent_on_supported_pypy(
