@@ -715,20 +715,20 @@ def test_install_patch_patches_supported_pypy(
     assert _patch.raw_building.InspectBuilder.object_build is not original_object_build
     assert "Installing PyPy Astroid object_build patch" in caplog.text
     assert "astroid InspectBuilder.object_build patched for PyPy" in caplog.text
+    assert re.search(
+        r"pylint=\d+\.\d+\.\d+ astroid=\d+\.\d+\.\d+ runtime=pypy",
+        caplog.text,
+    )
     info_messages = [
         record.getMessage()
         for record in caplog.records
         if record.levelno == logging.INFO
     ]
     assert len(info_messages) == 3
-    assert re.fullmatch(
-        r"Installing PyPy Astroid object_build patch "
-        r"\(pylint \d+\.\S+, astroid \d+\.\S+\)",
-        info_messages[0],
-    )
+    assert info_messages[0].startswith("Installing PyPy Astroid object_build patch")
     assert info_messages[1] == "astroid InspectBuilder.object_build patched for PyPy"
     assert re.fullmatch(
-        r"pylint=\d+\.\S+ astroid=\d+\.\S+ runtime=pypy",
+        r"pylint=\d+\.\d+\.\d+ astroid=\d+\.\d+\.\d+ runtime=pypy",
         info_messages[2],
     )
 
