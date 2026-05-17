@@ -45,31 +45,19 @@ def test_pylint_pypy_wrapper_lints_innocuous_file() -> None:
 @pytest.mark.timeout(60)
 def test_pylint_pypy_wrapper_exposes_source_tree_package() -> None:
     """Run the wrapper subprocess and verify it imports the source package."""
-    command = textwrap.dedent(
-        f"""\
-        import runpy
-        import sys
-
-        sys.argv = [{os.fspath(_WRAPPER_PATH)!r}, "--version"]
-        try:
-            runpy.run_path({os.fspath(_WRAPPER_PATH)!r}, run_name="__main__")
-        except SystemExit as error:
-            if error.code not in (0, None):
-                raise
-
-        import pylint_pypy_shim
-
-        print(pylint_pypy_shim.__file__)
-        """
-    )
     proc = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", command],
+        [
+            sys.executable,
+            os.fspath(_WRAPPER_PATH),
+            "-c",
+            "import pylint_pypy_shim; print(pylint_pypy_shim.__file__)",
+        ],
         capture_output=True,
         text=True,
         check=False,
     )
 
     assert proc.returncode == 0, f"stdout:\n{proc.stdout}\n\nstderr:\n{proc.stderr}"
-    package_path = pathlib.Path(proc.stdout.strip().splitlines()[-1])
+    package_path = pathlib.Path(proc.stdout.strip())
     normalised_path = pathlib.PurePosixPath(package_path.as_posix())
     assert "pkg/pylint_pypy_shim" in normalised_path.as_posix()

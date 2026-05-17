@@ -71,7 +71,7 @@ _IGNORED_GETATTR_ERRORS = (AttributeError, TypeError)
 _STRICT_ENV_VAR = "PYLINT_PYPY_SHIM_STRICT"
 _LOG = logging.getLogger(__name__)
 _PATCH_LOCK = threading.Lock()
-_METRICS_LOCK = threading.Lock()
+_METRICS_LOCK: threading.Lock = threading.Lock()
 _PATCH_INSTALLED = False
 _METRICS: collections.Counter[str] = collections.Counter()
 
@@ -294,7 +294,7 @@ def _object_build_factory(
         node: nodes.Module | nodes.ClassDef,
         obj: types.ModuleType | type,
     ) -> None:
-        """Delegate object building with the install-time logger."""
+        """Delegate to ``_object_build_with_logger`` with the captured logger."""
         _object_build_with_logger(self, node, obj, logger)
 
     return object_build
