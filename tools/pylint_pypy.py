@@ -1,4 +1,14 @@
-"""Compatibility script for running the PyPy Pylint shim from source."""
+"""Run the PyPy Pylint shim directly from the source tree.
+
+This wrapper lets developers and subprocess tests exercise the checkout
+without installing the package first. ``_bootstrap_pkg_path()`` prepends
+``pkg/`` to ``sys.path`` so ``pylint_pypy_shim`` resolves from the repository
+instead of an installed wheel. ``tests/test_pylint_pypy_e2e.py`` resolves this
+script through ``_WRAPPER_PATH`` and invokes it in a subprocess to verify that
+source-tree package visibility. Argument dispatch eventually delegates to
+``pylint_pypy_shim.cli.main``.
+
+"""
 
 from __future__ import annotations
 

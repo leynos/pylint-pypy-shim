@@ -8,7 +8,7 @@ import typing as typ
 import pytest
 
 pytest.importorskip("hypothesis")
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from pylint_pypy_shim import _patch
@@ -20,10 +20,10 @@ from .test_patch_support import ObjectBuildScenario, run_object_builder
     non_string_aliases=st.lists(
         st.one_of(st.integers(), st.floats(), st.binary(), st.none()),
         min_size=0,
-        max_size=5,
     ),
     include_string_alias=st.booleans(),
 )
+@settings(max_examples=200)
 def test_non_string_dir_entries_are_ignored(
     non_string_aliases: list[object],
     include_string_alias: object,

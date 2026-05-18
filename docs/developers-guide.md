@@ -174,3 +174,22 @@ root. `pyproject.toml` declares:
 The `build-release` Make target runs the build frontend inside the managed `uv`
 environment so the build tool dependency is resolved consistently with the rest
 of the project.
+
+## Linting and style
+
+Ruff is configured with `target-version = "py311"`. The project targets Python
+3.11 syntax for static analysis, so rules that only matter for older runtimes
+are suppressed.
+
+The `flake8-tidy-imports.banned-api` table forbids deprecated `typing.*`
+generic aliases such as `typing.Callable` and `typing.List`. Use
+`collections.abc`, `re`, and built-in collection types instead.
+
+Per-file ignores keep tests readable while retaining stricter production
+defaults. `**/test_*.py` and `tests/steps/*.py` suppress assertion (`S101`),
+argument-count (`PLR0913`, `PLR0917`), magic-value (`PLR2004`), and
+static-method (`PLR6301`) rules.
+
+`pydocstyle.convention = "numpy"` enforces NumPy-style docstrings across the
+package. Use NumPy summary, parameters, and returns sections when a callable
+needs more than a one-line summary.
