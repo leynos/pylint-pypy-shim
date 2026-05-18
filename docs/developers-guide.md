@@ -50,18 +50,19 @@ The PyPy-specific behaviour is limited to two compatibility guards:
 `_patch.py`. It returns the caller-provided logger when one is supplied and
 falls back to the module-level `_LOG` logger otherwise.
 
-`_object_build_factory(logger)` is a closure factory that captures the selected
-logger at install time and returns the patched `object_build` method. This
-keeps the bound logger active after patch installation without storing it in
-additional module-level state.
+`_object_build_factory()` returns the patched `object_build` method. The closure
+does not capture the installer logger; it reads `_GLOBAL_LOGGER` at runtime so a
+later supported `install_patch(logger)` call can redirect builder debug logs
+without replacing the Astroid method again.
 
 `_object_build_with_logger(self, node, obj, logger)` is the inner
 implementation delegate used by both the factory-produced closure and
 `_object_build_without_pypy_descriptor_aliases`. It accepts an explicit logger
 so per-alias debug messages route through the correct handler.
 
-Callers that pass a logger to `install_patch(...)` continue to receive debug
-and info messages from the patched builder after installation.
+`install_patch(...)` emits installation-time info through the supplied logger.
+After installation, the patched builder emits per-alias debug messages through
+the latest logger supplied to a supported `install_patch(logger)` call.
 
 ## Installation guard
 

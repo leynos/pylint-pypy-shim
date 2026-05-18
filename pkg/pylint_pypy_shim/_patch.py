@@ -70,6 +70,7 @@ if typ.TYPE_CHECKING:
 _IGNORED_GETATTR_ERRORS = (AttributeError, TypeError)
 _STRICT_ENV_VAR = "PYLINT_PYPY_SHIM_STRICT"
 _LOG = logging.getLogger(__name__)
+_GLOBAL_LOGGER = _LOG
 _PATCH_LOCK = threading.Lock()
 _METRICS_LOCK: threading.Lock = threading.Lock()
 _PATCH_INSTALLED = False
@@ -289,9 +290,7 @@ def _object_build_with_logger(
                 _attach_child_node(node, alias, child)
 
 
-def _object_build_factory(
-    logger: logging.Logger,
-) -> cabc.Callable[
+def _object_build_factory() -> cabc.Callable[
     [
         raw_building.InspectBuilder,
         nodes.Module | nodes.ClassDef,
@@ -299,21 +298,22 @@ def _object_build_factory(
     ],
     None,
 ]:
-    """Create an Astroid object builder bound to *logger*."""
+    """Create an Astroid object builder using the current global logger."""
 
     def object_build(
         self: raw_building.InspectBuilder,
         node: nodes.Module | nodes.ClassDef,
         obj: types.ModuleType | type,
     ) -> None:
-        """Delegate to ``_object_build_with_logger`` with the captured logger."""
-        _object_build_with_logger(self, node, obj, logger)
+        """Delegate to ``_object_build_with_logger`` with the runtime logger."""
+        _object_build_with_logger(self, node, obj, _GLOBAL_LOGGER)
 
     return object_build
 
 
 def install_patch(logger: logging.Logger | None = None) -> None:
     """Install the PyPy Astroid object-build patch when versions are supported."""
+    global _GLOBAL_LOGGER
     active_logger = _active_logger(logger)
     if sys.implementation.name != "pypy":
         active_logger.debug("Skipping PyPy Astroid object_build patch on non-PyPy")
@@ -335,6 +335,7 @@ def install_patch(logger: logging.Logger | None = None) -> None:
     global _PATCH_INSTALLED
     with _PATCH_LOCK:
         _validate_astroid_shape(active_logger)
+        _GLOBAL_LOGGER = active_logger
         if _PATCH_INSTALLED:
             active_logger.debug("PyPy Astroid object_build patch already installed")
             return
@@ -345,7 +346,7 @@ def install_patch(logger: logging.Logger | None = None) -> None:
         )
         typ.cast(
             "typ.Any", raw_building.InspectBuilder
-        ).object_build = _object_build_factory(active_logger)
+        ).object_build = _object_build_factory()
         _PATCH_INSTALLED = True
         active_logger.info("astroid InspectBuilder.object_build patched for PyPy")
         active_logger.info(

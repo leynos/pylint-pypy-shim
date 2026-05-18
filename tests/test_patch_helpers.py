@@ -764,6 +764,37 @@ def test_installed_object_builder_uses_injected_logger(
     assert "Dispatching existing as dummy member" in caplog.text
 
 
+def test_installed_object_builder_uses_latest_injected_logger(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Repeated installs update the runtime logger used by the builder."""
+
+    class Target:
+        def __dir__(self) -> list[str]:
+            return ["existing"]
+
+        def __getattr__(self, name: str) -> object:
+            if name == "existing":
+                return object()
+            raise AttributeError(name)
+
+    first_logger = logging.getLogger("tests.installed-object-build.first")
+    second_logger = logging.getLogger("tests.installed-object-build.second")
+    monkeypatch.setattr(_patch.sys.implementation, "name", "pypy", raising=False)
+    _patch.install_patch(first_logger)
+    _patch.install_patch(second_logger)
+    builder_factory = typ.cast("typ.Any", _patch.raw_building.InspectBuilder)
+    builder = builder_factory()
+    node = FakeNode()
+
+    with caplog.at_level(logging.DEBUG, logger=second_logger.name):
+        builder.object_build(as_astroid_node(node), typ.cast("typ.Any", Target()))
+
+    assert "Dispatching existing as dummy member" in caplog.text
+    assert all(record.name == second_logger.name for record in caplog.records)
+
+
 def test_install_patch_is_idempotent_on_supported_pypy(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -790,8 +821,8 @@ def test_install_patch_is_idempotent_under_concurrent_calls(
     original_factory = _patch._object_build_factory
     patched_builders: list[object] = []
 
-    def spy_object_build_factory(logger: logging.Logger) -> object:
-        patched_builder = original_factory(logger)
+    def spy_object_build_factory() -> object:
+        patched_builder = original_factory()
         patched_builders.append(patched_builder)
         return patched_builder
 
