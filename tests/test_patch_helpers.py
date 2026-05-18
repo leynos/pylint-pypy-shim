@@ -557,7 +557,7 @@ def test_object_build_ignores_non_string_dir_entries(
     monkeypatch.setattr(
         _patch,
         "_dispatch_member_to_child",
-        lambda builder_arg, node_arg, member, alias, logger: object(),
+        lambda builder_arg, node_arg, member, alias, logger=None: object(),
     )
 
     _patch._object_build_without_pypy_descriptor_aliases(
@@ -779,6 +779,31 @@ def test_install_patch_is_idempotent_on_supported_pypy(
     assert _patch._PATCH_INSTALLED is True
     assert _patch.raw_building.InspectBuilder.object_build is first_patched_object_build
     assert "PyPy Astroid object_build patch already installed" in caplog.text
+
+
+def test_install_patch_is_idempotent_under_concurrent_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent installation attempts patch Astroid once."""
+    monkeypatch.setattr(_patch.sys.implementation, "name", "pypy", raising=False)
+    original_object_build = _patch.raw_building.InspectBuilder.object_build
+    original_factory = _patch._object_build_factory
+    patched_builders: list[object] = []
+
+    def spy_object_build_factory(logger: logging.Logger) -> object:
+        patched_builder = original_factory(logger)
+        patched_builders.append(patched_builder)
+        return patched_builder
+
+    monkeypatch.setattr(_patch, "_object_build_factory", spy_object_build_factory)
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        list(executor.map(lambda _: _patch.install_patch(), range(32)))
+
+    assert _patch._PATCH_INSTALLED is True
+    assert len(patched_builders) == 1
+    assert _patch.raw_building.InspectBuilder.object_build is patched_builders[0]
+    assert _patch.raw_building.InspectBuilder.object_build is not original_object_build
 
 
 def test_install_patch_warns_for_unsupported_versions(

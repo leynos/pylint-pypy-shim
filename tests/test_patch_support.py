@@ -108,7 +108,7 @@ class RoutingSpies:
     ]
     fake_build_builtin_child: cabc.Callable[[object, object, object, str], object]
     fake_dispatch_member_to_child: cabc.Callable[
-        [object, object, object, str, object],
+        [object, object, object, str, object | None],
         object,
     ]
     fake_attach_child_node: cabc.Callable[[object, str], None]
@@ -164,7 +164,7 @@ def make_routing_spies(scenario: ObjectBuildScenario) -> RoutingSpies:
         node_arg: object,
         member: object,
         alias: str,
-        logger: object,
+        logger: object | None = None,
     ) -> object:
         del member, logger
         assert builder_arg is scenario.builder, (

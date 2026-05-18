@@ -56,7 +56,7 @@ def test_non_string_dir_entries_are_ignored(
         node_arg: object,
         member: object,
         alias: str,
-        logger: object,
+        logger: object | None = None,
     ) -> object:
         del member, logger
         assert builder_arg is scenario.builder
@@ -114,7 +114,7 @@ def test_getattr_failures_signal_skip(
         node_arg: object,
         member: object,
         alias: str,
-        logger: object,
+        logger: object | None = None,
     ) -> typ.NoReturn:
         del builder_arg, node_arg, member, alias, logger
         msg = "skipped getattr failures must not dispatch members"

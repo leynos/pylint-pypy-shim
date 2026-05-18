@@ -12,23 +12,37 @@ _PYTHON_COMMAND_OPTION = "-c"
 _PYTHON_COMMAND_SOURCE_INDEX = 2
 
 
-def _run_entrypoint() -> int:
-    """Prepend ``pkg/`` and delegate to ``pylint_pypy_shim.cli.main``."""
+def _bootstrap_pkg_path() -> None:
+    """Prepend ``pkg/`` to ``sys.path`` when it is not already present."""
     if str(_PKG_ROOT) not in sys.path:
         sys.path.insert(0, str(_PKG_ROOT))
+
+
+def _dispatch_argv() -> int:
+    """Dispatch wrapper arguments or delegate to ``pylint_pypy_shim.cli.main``."""
+    _bootstrap_pkg_path()
     if (
         len(sys.argv) >= _PYTHON_COMMAND_ARG_COUNT
         and sys.argv[1] == _PYTHON_COMMAND_OPTION
     ):
-        exec(  # noqa: S102
-            sys.argv[_PYTHON_COMMAND_SOURCE_INDEX],
-            {"__name__": "__main__"},
-        )
+        try:
+            exec(  # noqa: S102
+                sys.argv[_PYTHON_COMMAND_SOURCE_INDEX],
+                {"__name__": "__main__"},
+            )
+        except (SyntaxError, Exception) as exc:  # noqa: BLE001
+            print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
         return 0
 
     from pylint_pypy_shim.cli import main
 
     return main()
+
+
+def _run_entrypoint() -> int:
+    """Run the source-tree wrapper argument dispatcher."""
+    return _dispatch_argv()
 
 
 def main_entrypoint() -> int:

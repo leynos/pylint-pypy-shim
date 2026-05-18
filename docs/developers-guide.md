@@ -111,6 +111,14 @@ This lock covers the critical section where Astroid shape is validated,
 That allows the Pylint plugin and the CLI wrapper to call `install_patch(...)`
 in the same process without racing or reassigning the patch.
 
+`_METRICS` is a module-level `Counter[str]` that accumulates named event counts
+across all object-build calls. `_METRICS_LOCK` serialises every read and write
+to that counter so concurrent `object_build` invocations report consistent
+counts. `_record_metric(name)` is the single write path and always acquires the
+lock before incrementing. `get_metrics()` acquires the same lock and returns a
+snapshot copy of `_METRICS`; it is currently internal, but available for
+diagnostic use.
+
 ## Testing expectations
 
 The suite should cover public behaviour and the private routing helpers that

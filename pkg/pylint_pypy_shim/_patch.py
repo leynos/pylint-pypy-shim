@@ -169,32 +169,35 @@ def _dispatch_member_to_child(  # noqa: PLR0913, PLR0917 - Mirrors Astroid dispa
     node: nodes.Module | nodes.ClassDef,
     member: object,
     alias: str,
-    logger: logging.Logger,
+    logger: logging.Logger | None = None,
 ) -> nodes.NodeNG | None:
     """Dispatch members to the matching Astroid builder."""
+    active_logger = _active_logger(logger)
     match member:
         case _ if inspect.isbuiltin(member):
-            logger.debug("Dispatching %s as builtin member of %r", alias, node)
+            active_logger.debug("Dispatching %s as builtin member of %r", alias, node)
             child = _build_builtin_child(self, node, member, alias)
         case _ if inspect.isclass(member):
-            logger.debug("Dispatching %s as class member of %r", alias, node)
+            active_logger.debug("Dispatching %s as class member of %r", alias, node)
             child = _build_class_child(self, node, member, alias)
         case _ if inspect.ismethoddescriptor(member):
-            logger.debug("Dispatching %s as method descriptor of %r", alias, node)
+            active_logger.debug(
+                "Dispatching %s as method descriptor of %r", alias, node
+            )
             _record_metric("dispatch.method_descriptor")
             child = object_build_methoddescriptor(node, member)
         case _ if inspect.isdatadescriptor(member):
-            logger.debug("Dispatching %s as data descriptor of %r", alias, node)
+            active_logger.debug("Dispatching %s as data descriptor of %r", alias, node)
             _record_metric("dispatch.data_descriptor")
             child = object_build_datadescriptor(
                 node,
                 typ.cast("type", member),
             )
         case _ if isinstance(member, tuple(node_classes.CONST_CLS)):
-            logger.debug("Dispatching %s as const member of %r", alias, node)
+            active_logger.debug("Dispatching %s as const member of %r", alias, node)
             child = _build_const_child(node, member, alias)
         case _ if inspect.isroutine(member):
-            logger.debug("Dispatching %s as routine member of %r", alias, node)
+            active_logger.debug("Dispatching %s as routine member of %r", alias, node)
             _record_metric("dispatch.routine")
             child = _build_from_function(
                 node,
@@ -202,12 +205,14 @@ def _dispatch_member_to_child(  # noqa: PLR0913, PLR0917 - Mirrors Astroid dispa
                 typ.cast("typ.Any", self._module),
             )
         case _ if _safe_has_attribute(member, "__all__"):
-            logger.debug("Dispatching %s as module-like member of %r", alias, node)
+            active_logger.debug(
+                "Dispatching %s as module-like member of %r", alias, node
+            )
             _record_metric("dispatch.module_like")
             child = build_module(alias)
             self.object_build(child, typ.cast("types.ModuleType | type", member))
         case _:
-            logger.debug("Dispatching %s as dummy member of %r", alias, node)
+            active_logger.debug("Dispatching %s as dummy member of %r", alias, node)
             _record_metric("dispatch.dummy")
             child = build_dummy(member)
     return child
@@ -247,9 +252,10 @@ def _object_build_with_logger(
     self: raw_building.InspectBuilder,
     node: nodes.Module | nodes.ClassDef,
     obj: types.ModuleType | type,
-    logger: logging.Logger,
+    logger: logging.Logger | None = None,
 ) -> None:
     """Build Astroid nodes with the logger selected during patch installation."""
+    active_logger = _active_logger(logger)
     if obj in self._done:
         return
     self._done[obj] = node
@@ -258,21 +264,27 @@ def _object_build_with_logger(
         for alias in dir(obj):
             if not isinstance(alias, str):
                 _record_metric("resolve.non_string_dir_entry")
-                logger.debug("Ignoring non-string dir entry %r from %r", alias, obj)
+                active_logger.debug(
+                    "Ignoring non-string dir entry %r from %r", alias, obj
+                )
                 continue
             member, pypy__class_getitem__, skip = _resolve_member(
-                node, obj, alias, logger
+                node, obj, alias, active_logger
             )
             if skip:
                 _record_metric("dispatch.dummy.getattr_failure")
-                logger.debug("Attaching dummy node for skipped %s from %r", alias, obj)
+                active_logger.debug(
+                    "Attaching dummy node for skipped %s from %r", alias, obj
+                )
                 attach_dummy_node(node, alias)
                 continue
             if pypy__class_getitem__:
-                logger.debug("Dispatching %s through PyPy builtin path", alias)
+                active_logger.debug("Dispatching %s through PyPy builtin path", alias)
                 child = _build_builtin_child(self, node, member, alias)
             else:
-                child = _dispatch_member_to_child(self, node, member, alias, logger)
+                child = _dispatch_member_to_child(
+                    self, node, member, alias, active_logger
+                )
             if child is not None:
                 _attach_child_node(node, alias, child)
 
