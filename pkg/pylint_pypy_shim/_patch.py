@@ -388,7 +388,7 @@ def _is_strict_mode_enabled() -> bool:
 
 def _validate_astroid_shape(logger: logging.Logger | None = None) -> None:
     """Validate that Astroid still exposes the inspected patch target."""
-    active_logger = logger or logging.getLogger(__name__)
+    active_logger = _active_logger(logger)
     if not hasattr(raw_building, "InspectBuilder"):
         message = "astroid.raw_building.InspectBuilder is required"
         active_logger.error(message)
