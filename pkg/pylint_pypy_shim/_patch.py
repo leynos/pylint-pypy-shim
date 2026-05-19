@@ -42,6 +42,7 @@ Astroid unchanged unless strict mode is enabled.
 from __future__ import annotations
 
 import collections
+import collections.abc as cabc
 import inspect
 import logging
 import os
@@ -68,7 +69,10 @@ if typ.TYPE_CHECKING:
 
 _IGNORED_GETATTR_ERRORS = (AttributeError, TypeError)
 _STRICT_ENV_VAR = "PYLINT_PYPY_SHIM_STRICT"
+_LOG = logging.getLogger(__name__)
+_GLOBAL_LOGGER = _LOG
 _PATCH_LOCK = threading.Lock()
+_METRICS_LOCK: threading.Lock = threading.Lock()
 _PATCH_INSTALLED = False
 _METRICS: collections.Counter[str] = collections.Counter()
 
@@ -84,12 +88,19 @@ def _cached_child_type_error(member: object, child: object) -> str:
 
 def get_metrics() -> collections.Counter[str]:
     """Return a snapshot of patch routing and resolution counters."""
-    return _METRICS.copy()
+    with _METRICS_LOCK:
+        return _METRICS.copy()
 
 
 def _record_metric(name: str) -> None:
     """Increment an internal diagnostic counter."""
-    _METRICS[name] += 1
+    with _METRICS_LOCK:
+        _METRICS[name] += 1
+
+
+def _active_logger(logger: logging.Logger | None = None) -> logging.Logger:
+    """Return the caller-provided logger or this module's default logger."""
+    return logger or _LOG
 
 
 def _build_builtin_child(
@@ -154,37 +165,40 @@ def _attach_child_node(
         node.add_local_node(child, alias)
 
 
-def _dispatch_member_to_child(
+def _dispatch_member_to_child(  # noqa: PLR0913, PLR0917 - Mirrors Astroid dispatch context.
     self: raw_building.InspectBuilder,
     node: nodes.Module | nodes.ClassDef,
     member: object,
     alias: str,
+    logger: logging.Logger | None = None,
 ) -> nodes.NodeNG | None:
     """Dispatch members to the matching Astroid builder."""
-    logger = logging.getLogger(__name__)
+    active_logger = _active_logger(logger)
     match member:
         case _ if inspect.isbuiltin(member):
-            logger.debug("Dispatching %s as builtin member of %r", alias, node)
+            active_logger.debug("Dispatching %s as builtin member of %r", alias, node)
             child = _build_builtin_child(self, node, member, alias)
         case _ if inspect.isclass(member):
-            logger.debug("Dispatching %s as class member of %r", alias, node)
+            active_logger.debug("Dispatching %s as class member of %r", alias, node)
             child = _build_class_child(self, node, member, alias)
         case _ if inspect.ismethoddescriptor(member):
-            logger.debug("Dispatching %s as method descriptor of %r", alias, node)
+            active_logger.debug(
+                "Dispatching %s as method descriptor of %r", alias, node
+            )
             _record_metric("dispatch.method_descriptor")
             child = object_build_methoddescriptor(node, member)
         case _ if inspect.isdatadescriptor(member):
-            logger.debug("Dispatching %s as data descriptor of %r", alias, node)
+            active_logger.debug("Dispatching %s as data descriptor of %r", alias, node)
             _record_metric("dispatch.data_descriptor")
             child = object_build_datadescriptor(
                 node,
                 typ.cast("type", member),
             )
         case _ if isinstance(member, tuple(node_classes.CONST_CLS)):
-            logger.debug("Dispatching %s as const member of %r", alias, node)
+            active_logger.debug("Dispatching %s as const member of %r", alias, node)
             child = _build_const_child(node, member, alias)
         case _ if inspect.isroutine(member):
-            logger.debug("Dispatching %s as routine member of %r", alias, node)
+            active_logger.debug("Dispatching %s as routine member of %r", alias, node)
             _record_metric("dispatch.routine")
             child = _build_from_function(
                 node,
@@ -192,12 +206,14 @@ def _dispatch_member_to_child(
                 typ.cast("typ.Any", self._module),
             )
         case _ if _safe_has_attribute(member, "__all__"):
-            logger.debug("Dispatching %s as module-like member of %r", alias, node)
+            active_logger.debug(
+                "Dispatching %s as module-like member of %r", alias, node
+            )
             _record_metric("dispatch.module_like")
             child = build_module(alias)
             self.object_build(child, typ.cast("types.ModuleType | type", member))
         case _:
-            logger.debug("Dispatching %s as dummy member of %r", alias, node)
+            active_logger.debug("Dispatching %s as dummy member of %r", alias, node)
             _record_metric("dispatch.dummy")
             child = build_dummy(member)
     return child
@@ -215,8 +231,7 @@ def _resolve_member(
         member = getattr(obj, alias)
     except _IGNORED_GETATTR_ERRORS as error:
         _record_metric("resolve.getattr_failure")
-        if logger is not None:
-            logger.debug("Skipping %r from %r: %s", alias, obj, error)
+        _active_logger(logger).debug("Skipping %r from %r: %s", alias, obj, error)
         return None, pypy__class_getitem__, True
     if inspect.ismethod(member) and not pypy__class_getitem__:
         member = member.__func__
@@ -231,37 +246,75 @@ def _object_build_without_pypy_descriptor_aliases(
     obj: types.ModuleType | type,
 ) -> None:
     """Build Astroid nodes while ignoring non-string PyPy ``dir()`` entries."""
+    _object_build_with_logger(self, node, obj, _LOG)
+
+
+def _object_build_with_logger(
+    self: raw_building.InspectBuilder,
+    node: nodes.Module | nodes.ClassDef,
+    obj: types.ModuleType | type,
+    logger: logging.Logger | None = None,
+) -> None:
+    """Build Astroid nodes with the logger selected during patch installation."""
+    active_logger = _active_logger(logger)
     if obj in self._done:
         return
     self._done[obj] = node
-    logger = logging.getLogger(__name__)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         for alias in dir(obj):
             if not isinstance(alias, str):
                 _record_metric("resolve.non_string_dir_entry")
-                logger.debug("Ignoring non-string dir entry %r from %r", alias, obj)
+                active_logger.debug(
+                    "Ignoring non-string dir entry %r from %r", alias, obj
+                )
                 continue
             member, pypy__class_getitem__, skip = _resolve_member(
-                node, obj, alias, logger
+                node, obj, alias, active_logger
             )
             if skip:
                 _record_metric("dispatch.dummy.getattr_failure")
-                logger.debug("Attaching dummy node for skipped %s from %r", alias, obj)
+                active_logger.debug(
+                    "Attaching dummy node for skipped %s from %r", alias, obj
+                )
                 attach_dummy_node(node, alias)
                 continue
             if pypy__class_getitem__:
-                logger.debug("Dispatching %s through PyPy builtin path", alias)
+                active_logger.debug("Dispatching %s through PyPy builtin path", alias)
                 child = _build_builtin_child(self, node, member, alias)
             else:
-                child = _dispatch_member_to_child(self, node, member, alias)
+                child = _dispatch_member_to_child(
+                    self, node, member, alias, active_logger
+                )
             if child is not None:
                 _attach_child_node(node, alias, child)
 
 
+def _object_build_factory() -> cabc.Callable[
+    [
+        raw_building.InspectBuilder,
+        nodes.Module | nodes.ClassDef,
+        types.ModuleType | type,
+    ],
+    None,
+]:
+    """Create an Astroid object builder using the current global logger."""
+
+    def object_build(
+        self: raw_building.InspectBuilder,
+        node: nodes.Module | nodes.ClassDef,
+        obj: types.ModuleType | type,
+    ) -> None:
+        """Delegate to ``_object_build_with_logger`` with the runtime logger."""
+        _object_build_with_logger(self, node, obj, _GLOBAL_LOGGER)
+
+    return object_build
+
+
 def install_patch(logger: logging.Logger | None = None) -> None:
     """Install the PyPy Astroid object-build patch when versions are supported."""
-    active_logger = logger or logging.getLogger(__name__)
+    global _GLOBAL_LOGGER
+    active_logger = _active_logger(logger)
     if sys.implementation.name != "pypy":
         active_logger.debug("Skipping PyPy Astroid object_build patch on non-PyPy")
         return
@@ -282,6 +335,7 @@ def install_patch(logger: logging.Logger | None = None) -> None:
     global _PATCH_INSTALLED
     with _PATCH_LOCK:
         _validate_astroid_shape(active_logger)
+        _GLOBAL_LOGGER = active_logger
         if _PATCH_INSTALLED:
             active_logger.debug("PyPy Astroid object_build patch already installed")
             return
@@ -292,8 +346,15 @@ def install_patch(logger: logging.Logger | None = None) -> None:
         )
         typ.cast(
             "typ.Any", raw_building.InspectBuilder
-        ).object_build = _object_build_without_pypy_descriptor_aliases
+        ).object_build = _object_build_factory()
         _PATCH_INSTALLED = True
+        active_logger.info("astroid InspectBuilder.object_build patched for PyPy")
+        active_logger.info(
+            "pylint=%s astroid=%s runtime=%s",
+            pylint_version,
+            astroid_version,
+            sys.implementation.name,
+        )
 
 
 def _is_supported_version(version: str, minimum: int, maximum: int) -> bool:
@@ -328,7 +389,7 @@ def _is_strict_mode_enabled() -> bool:
 
 def _validate_astroid_shape(logger: logging.Logger | None = None) -> None:
     """Validate that Astroid still exposes the inspected patch target."""
-    active_logger = logger or logging.getLogger(__name__)
+    active_logger = _active_logger(logger)
     if not hasattr(raw_building, "InspectBuilder"):
         message = "astroid.raw_building.InspectBuilder is required"
         active_logger.error(message)

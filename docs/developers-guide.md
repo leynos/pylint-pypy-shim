@@ -15,6 +15,10 @@ The runtime package lives under `pkg/pylint_pypy_shim/`:
 - `plugin.py` exposes the Pylint plugin `register(...)` entry point.
 - `cli.py` exposes the `pylint-pypy` wrapper.
 
+The repository root also contains `tools/pylint_pypy.py`, a source-tree
+compatibility wrapper used by subprocess smoke tests and local checkout runs.
+It bootstraps `pkg/` onto `sys.path` before importing `pylint_pypy_shim.cli`.
+
 Tests live under `tests/`. Behaviour tests use `pytest-bdd` features in
 `tests/features/` and step definitions in `tests/steps/`.
 
@@ -39,6 +43,26 @@ The PyPy-specific behaviour is limited to two compatibility guards:
 - ignore non-string `dir(obj)` entries before member resolution;
 - treat `AttributeError` and `TypeError` from `getattr(obj, alias)` as skipped
   members, leaving Astroid to attach a dummy node.
+
+### Logger binding
+
+`_active_logger(logger)` is the single authoritative logger-selection helper in
+`_patch.py`. It returns the caller-provided logger when one is supplied and
+falls back to the module-level `_LOG` logger otherwise.
+
+`_object_build_factory()` returns the patched `object_build` method. The closure
+does not capture the installer logger; it reads `_GLOBAL_LOGGER` at runtime so a
+later supported `install_patch(logger)` call can redirect builder debug logs
+without replacing the Astroid method again.
+
+`_object_build_with_logger(self, node, obj, logger)` is the inner
+implementation delegate used by both the factory-produced closure and
+`_object_build_without_pypy_descriptor_aliases`. It accepts an explicit logger
+so per-alias debug messages route through the correct handler.
+
+`install_patch(...)` emits installation-time info through the supplied logger.
+After installation, the patched builder emits per-alias debug messages through
+the latest logger supplied to a supported `install_patch(logger)` call.
 
 ## Installation guard
 
@@ -65,11 +89,17 @@ Operational logging boundaries:
 
 - non-PyPy runtime: debug log and no-op;
 - unsupported versions: warning, or error plus `RuntimeError` in strict mode;
-- successful patch installation: info;
+- successful patch installation: info log for the patch event and a second
+  info log with the active Pylint version, Astroid version, and runtime;
 - repeated installation: debug;
 - ignored member-resolution failures: debug;
 - legacy Pylint CLI API fallback: debug;
 - non-integer legacy `SystemExit.code`: warning.
+
+`_patch.py` owns the module-level `_LOG` logger. Public callers may pass a
+logger into `install_patch(...)`; when they do not, the installer falls back to
+`_LOG`. Helper paths that accept a logger should keep using the injected logger
+for request-specific context and `_LOG` only for module-level events.
 
 ## State and concurrency
 
@@ -81,6 +111,14 @@ This lock covers the critical section where Astroid shape is validated,
 `_PATCH_INSTALLED` is checked, and `InspectBuilder.object_build` is replaced.
 That allows the Pylint plugin and the CLI wrapper to call `install_patch(...)`
 in the same process without racing or reassigning the patch.
+
+`_METRICS` is a module-level `Counter[str]` that accumulates named event counts
+across all object-build calls. `_METRICS_LOCK` serialises every read and write
+to that counter so concurrent `object_build` invocations report consistent
+counts. `_record_metric(name)` is the single write path and always acquires the
+lock before incrementing. `get_metrics()` acquires the same lock and returns a
+snapshot copy of `_METRICS`; it is currently internal, but available for
+diagnostic use.
 
 ## Testing expectations
 
@@ -97,6 +135,7 @@ mirror Astroid's internal dispatch. Keep these categories in place:
 - object-builder cache behaviour;
 - PyPy compatibility invariants, including property tests for non-string
   `dir()` entries and supported `getattr` failures;
+- source-tree wrapper behaviour for `tools/pylint_pypy.py`;
 - behaviour tests proving the CLI propagates both success and failure statuses.
 
 Run the normal project gates before committing:
@@ -136,3 +175,22 @@ root. `pyproject.toml` declares:
 The `build-release` Make target runs the build frontend inside the managed `uv`
 environment so the build tool dependency is resolved consistently with the rest
 of the project.
+
+## Linting and style
+
+Ruff is configured with `target-version = "py311"`. The project targets Python
+3.11 syntax for static analysis, so rules that only matter for older runtimes
+are suppressed.
+
+The `flake8-tidy-imports.banned-api` table forbids deprecated `typing.*`
+generic aliases such as `typing.Callable` and `typing.List`. Use
+`collections.abc`, `re`, and built-in collection types instead.
+
+Per-file ignores keep tests readable while retaining stricter production
+defaults. `**/test_*.py` and `tests/steps/*.py` suppress assertion (`S101`),
+argument-count (`PLR0913`, `PLR0917`), magic-value (`PLR2004`), and
+static-method (`PLR6301`) rules.
+
+`pydocstyle.convention = "numpy"` enforces NumPy-style docstrings across the
+package. Use NumPy summary, parameters, and returns sections when a callable
+needs more than a one-line summary.

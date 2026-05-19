@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import builtins
+import concurrent.futures
 import inspect
 import logging
+import re
 import sys
 import typing as typ
 
@@ -40,6 +42,9 @@ class _ClassWithClassGetItem:
     def __class_getitem__(cls, item: object) -> object:
         """Member used to verify the PyPy class-getitem exception."""
         return item
+
+
+_DISPATCH_LOGGER = logging.getLogger("tests.dispatch")
 
 
 def test_resolve_member_unwraps_bound_methods(
@@ -132,13 +137,11 @@ def test_resolve_member_logs_getattr_failures(
         def __getattr__(self, name: str) -> object:
             raise exception_type(name)
 
-    logger = logging.getLogger("tests.resolve-member")
-    with caplog.at_level(logging.DEBUG, logger=logger.name):
+    with caplog.at_level(logging.DEBUG, logger=_patch.__name__):
         member, is_pypy_class_getitem, should_skip = _patch._resolve_member(
             as_astroid_node(FakeNode()),
             FailingAttribute(),
             "missing",
-            logger,
         )
 
     assert member is None
@@ -194,6 +197,7 @@ def test_dispatch_member_to_child_routes_builtins(
         as_astroid_node(node),
         len,
         "len",
+        _DISPATCH_LOGGER,
     )
 
     assert result is child, (
@@ -222,6 +226,7 @@ def test_dispatch_member_to_child_routes_classes_uncached(
         as_astroid_node(node),
         member,
         "sample",
+        _DISPATCH_LOGGER,
     )
 
     assert result is child
@@ -304,6 +309,7 @@ def test_dispatch_member_to_child_routes_method_descriptors(
         as_astroid_node(node),
         member,
         "upper",
+        _DISPATCH_LOGGER,
     )
 
     assert result is child
@@ -338,6 +344,7 @@ def test_dispatch_member_to_child_routes_data_descriptors(
         as_astroid_node(node),
         member,
         "answer",
+        _DISPATCH_LOGGER,
     )
 
     assert result is child
@@ -364,6 +371,7 @@ def test_dispatch_member_to_child_routes_constants() -> None:
         as_astroid_node(node),
         42,
         "answer",
+        _DISPATCH_LOGGER,
     )
 
     assert isinstance(result, FakeConst)
@@ -397,6 +405,7 @@ def test_dispatch_member_to_child_routes_routines(
         as_astroid_node(node),
         member,
         "member",
+        _DISPATCH_LOGGER,
     )
 
     assert result is child
@@ -424,6 +433,7 @@ def test_dispatch_member_to_child_routes_all_exporting_members(
         as_astroid_node(node),
         member,
         "module_like",
+        _DISPATCH_LOGGER,
     )
 
     assert result is child
@@ -454,12 +464,30 @@ def test_dispatch_member_to_child_uses_dummy_fallback(
             as_astroid_node(node),
             member,
             "child",
+            _DISPATCH_LOGGER,
         )
 
     assert result is child
     assert calls == [member]
     assert _patch.get_metrics()["dispatch.dummy"] == 1
     assert "Dispatching child as dummy member" in caplog.text
+
+
+def test_record_metric_counts_concurrent_increments() -> None:
+    """Metric increments remain consistent under concurrent callers."""
+    metric_name = "tests.concurrent_metric"
+    increment_count = 1_000
+    start_value = _patch.get_metrics()[metric_name]
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        list(
+            executor.map(
+                lambda _: _patch._record_metric(metric_name),
+                range(increment_count),
+            )
+        )
+
+    assert _patch.get_metrics()[metric_name] == start_value + increment_count
 
 
 def test_attach_child_node_avoids_duplicate_locals() -> None:
@@ -529,7 +557,7 @@ def test_object_build_ignores_non_string_dir_entries(
     monkeypatch.setattr(
         _patch,
         "_dispatch_member_to_child",
-        lambda builder_arg, node_arg, member, alias: object(),
+        lambda builder_arg, node_arg, member, alias, logger=None: object(),
     )
 
     _patch._object_build_without_pypy_descriptor_aliases(
@@ -686,6 +714,85 @@ def test_install_patch_patches_supported_pypy(
     assert _patch._PATCH_INSTALLED is True
     assert _patch.raw_building.InspectBuilder.object_build is not original_object_build
     assert "Installing PyPy Astroid object_build patch" in caplog.text
+    assert "astroid InspectBuilder.object_build patched for PyPy" in caplog.text
+    assert re.search(
+        r"pylint=\d+\.\d+\.\d+ astroid=\d+\.\d+\.\d+ runtime=pypy",
+        caplog.text,
+    )
+    info_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.INFO
+    ]
+    assert len(info_messages) == 3
+    assert info_messages[0].startswith("Installing PyPy Astroid object_build patch")
+    assert info_messages[1] == "astroid InspectBuilder.object_build patched for PyPy"
+    assert re.fullmatch(
+        r"pylint=\d+\.\d+\.\d+ astroid=\d+\.\d+\.\d+ runtime=pypy",
+        info_messages[2],
+    )
+
+
+def test_installed_object_builder_uses_injected_logger(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The installed object builder uses the logger passed to install_patch."""
+
+    class FailingTarget:
+        def __dir__(self) -> list[str]:
+            return ["existing", "missing"]
+
+        def __getattr__(self, name: str) -> object:
+            if name == "existing":
+                return object()
+            raise AttributeError(name)
+
+    monkeypatch.setattr(_patch.sys.implementation, "name", "pypy", raising=False)
+    logger = logging.getLogger("tests.installed-object-build")
+    _patch.install_patch(logger)
+    builder_factory = typ.cast("typ.Any", _patch.raw_building.InspectBuilder)
+    builder = builder_factory()
+    node = FakeNode()
+
+    with caplog.at_level(logging.DEBUG, logger=logger.name):
+        builder.object_build(
+            as_astroid_node(node), typ.cast("typ.Any", FailingTarget())
+        )
+
+    assert "Skipping 'missing'" in caplog.text
+    assert "Dispatching existing as dummy member" in caplog.text
+
+
+def test_installed_object_builder_uses_latest_injected_logger(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Repeated installs update the runtime logger used by the builder."""
+
+    class Target:
+        def __dir__(self) -> list[str]:
+            return ["existing"]
+
+        def __getattr__(self, name: str) -> object:
+            if name == "existing":
+                return object()
+            raise AttributeError(name)
+
+    first_logger = logging.getLogger("tests.installed-object-build.first")
+    second_logger = logging.getLogger("tests.installed-object-build.second")
+    monkeypatch.setattr(_patch.sys.implementation, "name", "pypy", raising=False)
+    _patch.install_patch(first_logger)
+    _patch.install_patch(second_logger)
+    builder_factory = typ.cast("typ.Any", _patch.raw_building.InspectBuilder)
+    builder = builder_factory()
+    node = FakeNode()
+
+    with caplog.at_level(logging.DEBUG, logger=second_logger.name):
+        builder.object_build(as_astroid_node(node), typ.cast("typ.Any", Target()))
+
+    assert "Dispatching existing as dummy member" in caplog.text
+    assert all(record.name == second_logger.name for record in caplog.records)
 
 
 def test_install_patch_is_idempotent_on_supported_pypy(
@@ -703,6 +810,31 @@ def test_install_patch_is_idempotent_on_supported_pypy(
     assert _patch._PATCH_INSTALLED is True
     assert _patch.raw_building.InspectBuilder.object_build is first_patched_object_build
     assert "PyPy Astroid object_build patch already installed" in caplog.text
+
+
+def test_install_patch_is_idempotent_under_concurrent_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent installation attempts patch Astroid once."""
+    monkeypatch.setattr(_patch.sys.implementation, "name", "pypy", raising=False)
+    original_object_build = _patch.raw_building.InspectBuilder.object_build
+    original_factory = _patch._object_build_factory
+    patched_builders: list[object] = []
+
+    def spy_object_build_factory() -> object:
+        patched_builder = original_factory()
+        patched_builders.append(patched_builder)
+        return patched_builder
+
+    monkeypatch.setattr(_patch, "_object_build_factory", spy_object_build_factory)
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        list(executor.map(lambda _: _patch.install_patch(), range(32)))
+
+    assert _patch._PATCH_INSTALLED is True
+    assert len(patched_builders) == 1
+    assert _patch.raw_building.InspectBuilder.object_build is patched_builders[0]
+    assert _patch.raw_building.InspectBuilder.object_build is not original_object_build
 
 
 def test_install_patch_warns_for_unsupported_versions(

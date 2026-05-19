@@ -9,6 +9,9 @@ import typing as typ
 
 from ._patch import install_patch
 
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -30,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _run_supports_exit_parameter(run: typ.Callable[..., object]) -> bool:
+def _run_supports_exit_parameter(run: cabc.Callable[..., object]) -> bool:
     """Return whether the installed Pylint ``Run`` accepts ``exit=``."""
     return "exit" in inspect.signature(run).parameters
 

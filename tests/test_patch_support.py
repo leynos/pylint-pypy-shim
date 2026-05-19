@@ -9,6 +9,8 @@ import typing as typ
 from pylint_pypy_shim import _patch
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     import pytest
 
 
@@ -99,14 +101,17 @@ class ObjectBuildScenario:
 class RoutingSpies:
     """Spy callables and call logs for object-builder routing tests."""
 
-    fake_dir: typ.Callable[[object], list[object]]
-    fake_resolve_member: typ.Callable[
+    fake_dir: cabc.Callable[[object], list[object]]
+    fake_resolve_member: cabc.Callable[
         [object, object, str, object | None],
         tuple[object | None, bool, bool],
     ]
-    fake_build_builtin_child: typ.Callable[[object, object, object, str], object]
-    fake_dispatch_member_to_child: typ.Callable[[object, object, object, str], object]
-    fake_attach_child_node: typ.Callable[[object, str], None]
+    fake_build_builtin_child: cabc.Callable[[object, object, object, str], object]
+    fake_dispatch_member_to_child: cabc.Callable[
+        [object, object, object, str, object | None],
+        object,
+    ]
+    fake_attach_child_node: cabc.Callable[[object, str], None]
     builtin_calls: list[str]
     dispatch_calls: list[str]
     attach_calls: list[tuple[object, str]]
@@ -159,8 +164,9 @@ def make_routing_spies(scenario: ObjectBuildScenario) -> RoutingSpies:
         node_arg: object,
         member: object,
         alias: str,
+        logger: object | None = None,
     ) -> object:
-        del member
+        del member, logger
         assert builder_arg is scenario.builder, (
             "builder argument must be forwarded unchanged"
         )

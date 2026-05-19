@@ -61,6 +61,16 @@ For a local checkout, run the module directly:
 uv run python -m pylint_pypy_shim.cli your_package
 ```
 
+Local checkouts also provide `tools/pylint_pypy.py` for subprocess smoke tests
+and ad hoc source-tree runs:
+
+```bash
+uv run python tools/pylint_pypy.py your_package
+```
+
+The script adds the checkout's `pkg/` directory to `sys.path` before importing
+the package, so it works before the project is installed as a wheel.
+
 The wrapper returns Pylint's exit status. A clean run returns `0`; lint
 violations or Pylint failures return Pylint's non-zero status so CI can fail in
 the normal way.
@@ -131,6 +141,9 @@ If the patch is not being installed, check these items first:
 - Confirm the command is running under PyPy, not CPython.
 - Confirm Pylint is version 4.x and Astroid is version 4.x.
 - Run with logging enabled and look for `pylint_pypy_shim` warnings.
+- On successful PyPy installation, INFO logs report that
+  `InspectBuilder.object_build` was patched and include the active Pylint
+  version, Astroid version, and runtime name.
 - Use `PYLINT_PYPY_SHIM_STRICT=1` in CI when unsupported versions should stop
   the job immediately.
 
