@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "ISC" }
 dependencies = [
-    "pylint>=4,<5",
+    "pylint>=4.0.6,<5",
     "astroid>=4,<5",
 ]
 
