@@ -21,6 +21,7 @@ dev = [
     "pyright",
     "pytest-timeout",
     "pytest-xdist",
+    "pyyaml>=6.0.3",
 ]
 
 [tool.ruff]
@@ -168,6 +169,24 @@ max-complexity = 8
 max-args = 4
 max-bool-expr = 2
 max-locals = 10
+
+[tool.mutmut]
+# mutmut 3.6 hardcodes its importable layouts (./, src/, source/) and
+# strips only the "src." prefix from mutant keys, so a pkg/ layout
+# yields unattributable mutants. The committed src -> pkg symlink lets
+# mutmut see a src layout without restructuring the package.
+source_paths = ["src/pylint_pypy_shim/"]
+pytest_add_cli_args_test_selection = ["tests/"]
+# The e2e, snapshot, and BDD tests execute tools/pylint_pypy.py as a
+# subprocess, resolving it from the repository root; mutmut only copies
+# tests/ and pyproject.toml into its mutants/ working copy by default.
+# The whole directory is listed because mutmut creates parent
+# directories for directory entries only.
+also_copy = ["tools/"]
+do_not_mutate = [
+    # Version constant: mutating the string has no behavioural signal.
+    "src/pylint_pypy_shim/_version.py",
+]
 
 [tool.pytest.ini_options]
 # Tests automatically killed after seconds elapsed
