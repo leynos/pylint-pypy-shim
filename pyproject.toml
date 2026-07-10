@@ -30,6 +30,9 @@ preview = true
 src = ["pkg", "tests"]
 target-version = "py311"
 
+[tool.ruff.per-file-target-version]
+"scripts/*.py" = "py313"
+
 [tool.ruff.lint]
 select = [
     "F",        # Pyflakes rules

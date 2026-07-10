@@ -81,7 +81,7 @@ Only the exact value `1` enables strict mode.
 
 ## Validation and observability
 
-Do not use `assert` for runtime validation in the shim. Python optimisation can
+Do not use `assert` for runtime validation in the shim. Python optimization can
 remove assertions, so `_patch.py` raises `RuntimeError` for unsupported Astroid
 shape and logs the reason first.
 
@@ -113,7 +113,7 @@ That allows the Pylint plugin and the CLI wrapper to call `install_patch(...)`
 in the same process without racing or reassigning the patch.
 
 `_METRICS` is a module-level `Counter[str]` that accumulates named event counts
-across all object-build calls. `_METRICS_LOCK` serialises every read and write
+across all object-build calls. `_METRICS_LOCK` serializes every read and write
 to that counter so concurrent `object_build` invocations report consistent
 counts. `_record_metric(name)` is the single write path and always acquires the
 lock before incrementing. `get_metrics()` acquires the same lock and returns a
@@ -146,9 +146,15 @@ make lint
 make typecheck
 make test
 make markdownlint
+make spelling
 make nixie
 make build-release
 ```
+
+The spelling gate refreshes the shared en-GB-oxendict dictionary into an
+untracked local cache only when the authoritative copy is newer, merges the
+repository-specific policy in `typos.local.toml`, and regenerates the tracked
+`typos.toml`. Edit the local policy rather than the generated configuration.
 
 For PyPy validation, run:
 
