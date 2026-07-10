@@ -58,6 +58,17 @@ class _CacheTargets:
     metadata: pathlib.Path
 
 
+class _RemoteResponse(typ.Protocol):
+    """Expose the HTTP response surface used by cache refresh."""
+
+    status: int
+    headers: cabc.Mapping[str, str]
+
+    def read(self) -> bytes:
+        """Read the response body."""
+        ...
+
+
 def _string_list(table: cabc.Mapping[str, object], key: str) -> tuple[str, ...]:
     """Read and validate a list of strings from a TOML table."""
     value = table.get(key, [])
@@ -345,6 +356,40 @@ def _write_remote_cache(
     return RefreshResult("refreshed", targets.cache)
 
 
+def _remote_response_result(
+    source: str,
+    targets: _CacheTargets,
+    saved: cabc.Mapping[str, object],
+    response: _RemoteResponse,
+) -> RefreshResult:
+    """Return the cache result for a successful HTTP response."""
+    if response.status == HTTP_NOT_MODIFIED and _valid_cache(targets.cache):
+        return RefreshResult("current", targets.cache)
+    if _valid_cache(targets.cache) and _remote_is_not_newer(saved, response.headers):
+        return RefreshResult("current", targets.cache)
+    return _write_remote_cache(source, targets, response.read(), response.headers)
+
+
+def _stale_cache_or_raise(
+    cache: pathlib.Path,
+    error: OSError | urllib.error.URLError,
+) -> RefreshResult:
+    """Return a valid stale cache or propagate the download failure."""
+    if _valid_cache(cache):
+        return RefreshResult("stale-cache", cache)
+    raise error
+
+
+def _http_error_result(
+    cache: pathlib.Path,
+    error: urllib.error.HTTPError,
+) -> RefreshResult:
+    """Translate an HTTP failure into the available cache result."""
+    if error.code == HTTP_NOT_MODIFIED and _valid_cache(cache):
+        return RefreshResult("current", cache)
+    return _stale_cache_or_raise(cache, error)
+
+
 def _refresh_http(
     source: str,
     cache: pathlib.Path,
@@ -358,26 +403,13 @@ def _refresh_http(
             request,
             timeout=30.0,
         ) as response:
-            if response.status == HTTP_NOT_MODIFIED and _valid_cache(cache):
-                return RefreshResult("current", cache)
-            if _valid_cache(cache) and _remote_is_not_newer(saved, response.headers):
-                return RefreshResult("current", cache)
-            return _write_remote_cache(
-                source,
-                _CacheTargets(cache, metadata),
-                response.read(),
-                response.headers,
+            return _remote_response_result(
+                source, _CacheTargets(cache, metadata), saved, response
             )
     except urllib.error.HTTPError as error:
-        if error.code == HTTP_NOT_MODIFIED and _valid_cache(cache):
-            return RefreshResult("current", cache)
-        if _valid_cache(cache):
-            return RefreshResult("stale-cache", cache)
-        raise
-    except (OSError, urllib.error.URLError):
-        if _valid_cache(cache):
-            return RefreshResult("stale-cache", cache)
-        raise
+        return _http_error_result(cache, error)
+    except (OSError, urllib.error.URLError) as error:
+        return _stale_cache_or_raise(cache, error)
 
 
 def refresh_base(
