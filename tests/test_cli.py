@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 import types
 import typing as typ
@@ -9,6 +10,116 @@ import typing as typ
 import pytest
 
 from pylint_pypy_shim import _patch, cli, plugin
+
+
+def _install_fake_pylint(monkeypatch: pytest.MonkeyPatch, run_cls: type) -> None:
+    """Install fake ``pylint``/``pylint.lint`` modules exposing *run_cls*."""
+    fake_pylint = typ.cast("typ.Any", types.ModuleType("pylint"))
+    fake_pylint.__version__ = "4.0.0"
+    fake_pylint.__path__ = []
+    fake_lint = typ.cast("typ.Any", types.ModuleType("pylint.lint"))
+    fake_lint.Run = run_cls
+    fake_pylint.lint = fake_lint
+    monkeypatch.setattr(_patch.sys.implementation, "name", "cpython", raising=False)
+    monkeypatch.setitem(sys.modules, "pylint", fake_pylint)
+    monkeypatch.setitem(sys.modules, "pylint.lint", fake_lint)
+
+
+def test_main_defaults_to_sys_argv_tail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without explicit argv, `main` forwards exactly ``sys.argv[1:]`` to Run."""
+    calls: list[list[str]] = []
+
+    class FakeLinter:
+        msg_status = 0
+
+    class FakeRun:
+        def __init__(self, argv: list[str], *, exit: bool) -> None:  # noqa: A002
+            del exit
+            calls.append(argv)
+            self.linter = FakeLinter()
+
+    _install_fake_pylint(monkeypatch, FakeRun)
+    monkeypatch.setattr(sys, "argv", ["pylint-pypy", "first.py", "second.py"])
+
+    assert cli.main() == 0
+    assert calls == [["first.py", "second.py"]], (
+        "main(None) must forward sys.argv[1:] unchanged"
+    )
+
+
+def test_main_passes_module_logger_to_install_patch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`main` wires the CLI module logger into `install_patch`."""
+    loggers: list[object] = []
+
+    class FakeLinter:
+        msg_status = 0
+
+    class FakeRun:
+        def __init__(self, argv: list[str], *, exit: bool) -> None:  # noqa: A002
+            del argv, exit
+            self.linter = FakeLinter()
+
+    _install_fake_pylint(monkeypatch, FakeRun)
+    monkeypatch.setattr(cli, "install_patch", loggers.append)
+
+    assert cli.main(["target.py"]) == 0
+    assert loggers == [cli.LOGGER], (
+        "install_patch must receive the pylint_pypy_shim.cli logger"
+    )
+
+
+def test_main_returns_zero_when_linter_lacks_msg_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A linter without ``msg_status`` yields status 0, not an error."""
+
+    class BareLinter:
+        """Linter stand-in without a msg_status attribute."""
+
+    class FakeRun:
+        def __init__(self, argv: list[str], *, exit: bool) -> None:  # noqa: A002
+            del argv, exit
+            self.linter = BareLinter()
+
+    _install_fake_pylint(monkeypatch, FakeRun)
+
+    assert cli.main(["target.py"]) == 0
+
+
+def test_main_legacy_run_receives_args_and_returns_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A legacy Run that returns normally yields 0 and gets the parsed args."""
+    calls: list[list[str]] = []
+
+    class LegacyRun:
+        def __init__(self, argv: list[str]) -> None:
+            calls.append(argv)
+
+    _install_fake_pylint(monkeypatch, LegacyRun)
+
+    assert cli.main(["target.py"]) == 0
+    assert calls == [["target.py"]], (
+        "the legacy Run API must receive the parsed args, not None"
+    )
+
+
+def test_system_exit_non_integer_status_warning_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The non-integer-status warning names the payload and the fallback."""
+    with caplog.at_level(logging.WARNING, logger=cli.LOGGER.name):
+        status = cli._system_exit_code_to_status("fatal")
+
+    assert status == 0
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+    ]
+    assert warnings == ["Pylint exited with non-integer status 'fatal'; returning 0"]
 
 
 def test_main_installs_patch_and_returns_pylint_status(
