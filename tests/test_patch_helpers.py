@@ -1135,71 +1135,61 @@ def test_resolve_member_ignores_class_getitem_on_non_pypy(
     )
 
 
-def test_object_build_forwards_resolved_member_to_pypy_builtin_path(
+@pytest.mark.parametrize(
+    ("is_pypy_class_getitem", "spy_target", "alias"),
+    [
+        (True, "_build_builtin_child", "__class_getitem__"),
+        (False, "_dispatch_member_to_child", "member"),
+    ],
+)
+def test_object_build_forwards_resolved_member(
     monkeypatch: pytest.MonkeyPatch,
+    is_pypy_class_getitem: bool,  # ruff:ignore[boolean-type-hint-positional-argument] - parametrized flag, not an API.
+    spy_target: str,
+    alias: str,
 ) -> None:
-    """The PyPy builtin path receives the resolved member, not None."""
+    """Both builder routes receive the resolved member, not None."""
     builder = FakeBuilder()
     node = FakeNode()
-    target = type("PyPyTarget", (), {})
+    target = type("ForwardingTarget", (), {})
     sentinel = object()
-    calls: list[tuple[object, object, object, str]] = []
+    calls: list[tuple[object, ...]] = []
 
-    def fake_build_builtin_child(
-        builder_arg: object,
-        node_arg: object,
-        member_arg: object,
-        alias_arg: str,
-    ) -> object:
-        calls.append((builder_arg, node_arg, member_arg, alias_arg))
+    def spy(*args: object) -> object:
+        calls.append(args[:4])
         return object()
 
-    monkeypatch.setattr(builtins, "dir", lambda obj: ["__class_getitem__"])
+    monkeypatch.setattr(builtins, "dir", lambda obj: [alias])
     monkeypatch.setattr(
         _patch,
         "_resolve_member",
-        lambda node_arg, obj, alias, logger=None: (sentinel, True, False),
+        lambda node_arg, obj, alias_arg, logger=None: (
+            sentinel,
+            is_pypy_class_getitem,
+            False,
+        ),
     )
-    monkeypatch.setattr(_patch, "_build_builtin_child", fake_build_builtin_child)
+    monkeypatch.setattr(_patch, spy_target, spy)
 
     _patch._object_build_without_pypy_descriptor_aliases(
         as_inspect_builder(builder), as_astroid_node(node), target
     )
 
-    assert calls == [(builder, node, sentinel, "__class_getitem__")]
+    assert calls == [(builder, node, sentinel, alias)]
 
 
-def test_object_build_forwards_resolved_member_to_dispatch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Ordinary members reach `_dispatch_member_to_child` unchanged."""
+def test_dispatch_member_to_child_builds_real_builtin_child() -> None:
+    """A genuine builtin member takes the builtin branch and yields a child."""
     builder = FakeBuilder()
     node = FakeNode()
-    target = type("DispatchTarget", (), {})
-    sentinel = object()
-    calls: list[tuple[object, object, object, str]] = []
 
-    def fake_dispatch(
-        builder_arg: object,
-        node_arg: object,
-        member_arg: object,
-        alias_arg: str,
-        logger: object | None = None,
-    ) -> object:
-        del logger
-        calls.append((builder_arg, node_arg, member_arg, alias_arg))
-        return object()
-
-    monkeypatch.setattr(builtins, "dir", lambda obj: ["member"])
-    monkeypatch.setattr(
-        _patch,
-        "_resolve_member",
-        lambda node_arg, obj, alias, logger=None: (sentinel, False, False),
-    )
-    monkeypatch.setattr(_patch, "_dispatch_member_to_child", fake_dispatch)
-
-    _patch._object_build_without_pypy_descriptor_aliases(
-        as_inspect_builder(builder), as_astroid_node(node), target
+    result = _patch._dispatch_member_to_child(
+        as_inspect_builder(builder),
+        as_astroid_node(node),
+        len,
+        "len",
+        _DISPATCH_LOGGER,
     )
 
-    assert calls == [(builder, node, sentinel, "member")]
+    assert result is not None
+    assert _patch.get_metrics() == collections.Counter({"dispatch.builtin": 1})
