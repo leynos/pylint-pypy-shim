@@ -1067,6 +1067,7 @@ def test_build_class_child_forwards_exact_imported_member_arguments() -> None:
     assert _patch.get_metrics() == collections.Counter({"dispatch.imported": 1})
 
 
+# Kills the get_metrics() counter survivors tracked in #27.
 def test_build_class_child_metrics_distinguish_cached_and_built() -> None:
     """Cache hits and rebuilds increment their own exact counters."""
     builder = FakeBuilder()
@@ -1197,6 +1198,7 @@ def test_resolve_member_ignores_class_getitem_on_non_pypy(
     )
 
 
+# Kills the dispatch.dummy.getattr_failure counter survivor tracked in #27.
 def test_object_build_records_getattr_failure_metric(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1232,6 +1234,8 @@ _SKIP_TEMPLATE = (
 )
 
 
+# Kills the install_patch version-gate and shape-validation survivors
+# tracked in #28.
 class _VersionGateCase(typ.NamedTuple):
     """One unsupported-version scenario for the install_patch gate."""
 
