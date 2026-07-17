@@ -1,4 +1,7 @@
-"""Unit tests for the Pylint CLI wrapper."""
+"""Unit tests for the Pylint CLI wrapper.
+
+Kills the CLI exit-status and argument-handling survivors tracked in #25.
+"""
 
 from __future__ import annotations
 

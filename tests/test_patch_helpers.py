@@ -1,4 +1,8 @@
-"""Unit tests for the PyPy-safe Astroid patch helpers."""
+"""Unit tests for the PyPy-safe Astroid patch helpers.
+
+Kills the ``_build_builtin_child`` untested-path survivors tracked in #24
+and the dispatch argument-propagation survivors tracked in #26.
+"""
 
 from __future__ import annotations
 
