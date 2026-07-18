@@ -21,7 +21,7 @@ def test_main_installs_patch_and_returns_pylint_status(
         msg_status = 4
 
     class FakeRun:
-        def __init__(self, argv: list[str], *, exit: bool) -> None:  # noqa: A002
+        def __init__(self, argv: list[str], *, exit: bool) -> None:  # ruff:ignore[builtin-argument-shadowing]
             calls.append((argv, exit))
             self.linter = FakeLinter()
 
@@ -84,7 +84,7 @@ def test_plugin_and_cli_share_idempotent_patch(
         msg_status = 0
 
     class FakeRun:
-        def __init__(self, argv: list[str], *, exit: bool) -> None:  # noqa: A002
+        def __init__(self, argv: list[str], *, exit: bool) -> None:  # ruff:ignore[builtin-argument-shadowing]
             calls.append((argv, exit))
             self.linter = FakeLinter()
 

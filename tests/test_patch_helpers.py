@@ -533,7 +533,7 @@ def test_object_build_ignores_non_string_dir_entries(
     target = type("Target", (), {})
     resolved_aliases: list[str] = []
 
-    class _Alias(str):  # noqa: FURB189 - intentional str-like alias subclass.
+    class _Alias(str):  # ruff:ignore[subclass-builtin] - intentional str-like alias subclass.
         """String subclass used to prove str-like aliases are accepted."""
 
     def fake_dir(obj: object) -> list[object]:
