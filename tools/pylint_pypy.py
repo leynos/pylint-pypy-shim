@@ -36,11 +36,11 @@ def _dispatch_argv() -> int:
         and sys.argv[1] == _PYTHON_COMMAND_OPTION
     ):
         try:
-            exec(  # noqa: S102
+            exec(  # ruff:ignore[exec-builtin]
                 sys.argv[_PYTHON_COMMAND_SOURCE_INDEX],
                 {"__name__": "__main__"},
             )
-        except (SyntaxError, Exception) as exc:  # noqa: BLE001
+        except (SyntaxError, Exception) as exc:  # ruff:ignore[blind-except]
             print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
             return 1
         return 0

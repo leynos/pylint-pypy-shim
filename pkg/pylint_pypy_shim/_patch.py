@@ -165,7 +165,7 @@ def _attach_child_node(
         node.add_local_node(child, alias)
 
 
-def _dispatch_member_to_child(  # noqa: PLR0913, PLR0917 - Mirrors Astroid dispatch context.
+def _dispatch_member_to_child(  # ruff:ignore[too-many-arguments, too-many-positional-arguments] - Mirrors Astroid dispatch context.
     self: raw_building.InspectBuilder,
     node: nodes.Module | nodes.ClassDef,
     member: object,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import subprocess  # noqa: S404 - safe: test harness runs CLI wrapper subprocess.
+import subprocess  # ruff:ignore[suspicious-subprocess-import] - safe: test harness runs CLI wrapper subprocess.
 import sys
 import typing as typ
 
@@ -20,7 +20,7 @@ def test_cli_violation_output_snapshot(
     module_path = tmp_path / "violating_module.py"
     module_path.write_text("VALUE = 1\n", encoding="utf-8")
 
-    result = subprocess.run(  # noqa: S603 - safe: controlled input; check=False.
+    result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true] - safe: controlled input; check=False.
         [
             sys.executable,
             "-m",

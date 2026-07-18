@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import pathlib
-import subprocess  # noqa: S404
+import subprocess  # ruff:ignore[suspicious-subprocess-import]
 import sys
 import tempfile
 import textwrap
@@ -32,7 +32,7 @@ def test_pylint_pypy_wrapper_lints_innocuous_file() -> None:
             encoding="utf-8",
         )
 
-        proc = subprocess.run(  # noqa: S603
+        proc = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
             [sys.executable, os.fspath(_WRAPPER_PATH), os.fspath(temp_path)],
             capture_output=True,
             text=True,
@@ -45,7 +45,7 @@ def test_pylint_pypy_wrapper_lints_innocuous_file() -> None:
 @pytest.mark.timeout(60)
 def test_pylint_pypy_wrapper_exposes_source_tree_package() -> None:
     """Run the wrapper subprocess and verify it imports the source package."""
-    proc = subprocess.run(  # noqa: S603
+    proc = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
         [
             sys.executable,
             os.fspath(_WRAPPER_PATH),
