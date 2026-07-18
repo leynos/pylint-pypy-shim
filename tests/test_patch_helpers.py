@@ -74,6 +74,10 @@ def test_resolve_member_unwraps_bound_methods(
     assert should_skip is False, (
         "_resolve_member must not signal skip for a resolvable alias"
     )
+    assert _patch.get_metrics() == collections.Counter({
+        "resolve.bound_method_unwrapped": 1,
+        "resolve.success": 1,
+    }), "unwrapping a bound method must record exactly those two counters"
 
 
 def test_resolve_member_keeps_pypy_class_getitem_bound(
@@ -100,6 +104,9 @@ def test_resolve_member_keeps_pypy_class_getitem_bound(
     )
     assert should_skip is False, (
         "_resolve_member must not signal skip for resolvable __class_getitem__"
+    )
+    assert _patch.get_metrics() == collections.Counter({"resolve.success": 1}), (
+        "a successful resolve must record exactly the resolve.success counter"
     )
 
 
@@ -129,6 +136,9 @@ def test_resolve_member_signals_skip_when_getattr_fails(
     )
     assert should_skip is True, "_resolve_member must signal skip when getattr raises"
     assert not calls, "_resolve_member must not attach dummy nodes directly"
+    assert _patch.get_metrics() == collections.Counter({
+        "resolve.getattr_failure": 1
+    }), "a getattr failure must record exactly the resolve.getattr_failure counter"
 
 
 @pytest.mark.parametrize("exception_type", [AttributeError, TypeError])
@@ -319,6 +329,7 @@ def test_dispatch_member_to_child_routes_method_descriptors(
 
     assert result is child
     assert calls == [(node, member)]
+    assert _patch.get_metrics()["dispatch.method_descriptor"] == 1
 
 
 def test_dispatch_member_to_child_routes_data_descriptors(
@@ -354,6 +365,7 @@ def test_dispatch_member_to_child_routes_data_descriptors(
 
     assert result is child
     assert calls == [(node, member)]
+    assert _patch.get_metrics()["dispatch.data_descriptor"] == 1
 
 
 def test_build_const_child_respects_special_attributes() -> None:
@@ -415,6 +427,7 @@ def test_dispatch_member_to_child_routes_routines(
 
     assert result is child
     assert calls == [(node, member, builder._module)]
+    assert _patch.get_metrics()["dispatch.routine"] == 1
 
 
 def test_dispatch_member_to_child_routes_all_exporting_members(
@@ -444,6 +457,7 @@ def test_dispatch_member_to_child_routes_all_exporting_members(
     assert result is child
     assert calls == ["module_like"]
     assert builder.object_build_calls == [(child, member)]
+    assert _patch.get_metrics()["dispatch.module_like"] == 1
 
 
 def test_dispatch_member_to_child_uses_dummy_fallback(
@@ -576,6 +590,9 @@ def test_object_build_ignores_non_string_dir_entries(
     )
     assert list(node.locals) == ["child"], (
         "object builder must not attach locals for non-string aliases"
+    )
+    assert _patch.get_metrics()["resolve.non_string_dir_entry"] == 2, (
+        "each non-string dir entry must increment resolve.non_string_dir_entry"
     )
 
 
@@ -1050,6 +1067,31 @@ def test_build_class_child_forwards_exact_imported_member_arguments() -> None:
     assert _patch.get_metrics() == collections.Counter({"dispatch.imported": 1})
 
 
+# Kills the get_metrics() counter survivors tracked in #27.
+def test_build_class_child_metrics_distinguish_cached_and_built() -> None:
+    """Cache hits and rebuilds increment their own exact counters."""
+    builder = FakeBuilder()
+    node = FakeNode()
+    cached_member = type("CachedSample", (), {})
+    built_member = type("BuiltSample", (), {})
+    builder._done[cached_member] = FakeClassDef()
+
+    _patch._build_class_child(
+        as_inspect_builder(builder), as_astroid_node(node), cached_member, "cached"
+    )
+
+    assert _patch.get_metrics() == collections.Counter({"dispatch.class.cached": 1})
+
+    _patch._build_class_child(
+        as_inspect_builder(builder), as_astroid_node(node), built_member, "built"
+    )
+
+    assert _patch.get_metrics() == collections.Counter({
+        "dispatch.class.cached": 1,
+        "dispatch.class.built": 1,
+    })
+
+
 def test_build_class_child_error_names_member_and_cached_type() -> None:
     """The cached-child error names the member and the actual cached type."""
     builder = FakeBuilder()
@@ -1065,6 +1107,23 @@ def test_build_class_child_error_names_member_and_cached_type() -> None:
     assert str(excinfo.value) == (
         f"_done entry for {member!r} must be a ClassDef, got object"
     )
+
+
+def test_build_const_child_metrics_distinguish_special_and_const() -> None:
+    """Special-attribute skips and const builds increment exact counters."""
+    node = FakeNode()
+    node.special_attributes.add("__special__")
+
+    assert _patch._build_const_child(as_astroid_node(node), 1, "__special__") is None
+    assert _patch.get_metrics() == collections.Counter({"dispatch.const.special": 1})
+
+    result = _patch._build_const_child(as_astroid_node(node), 2, "plain")
+
+    assert isinstance(result, FakeConst)
+    assert _patch.get_metrics() == collections.Counter({
+        "dispatch.const.special": 1,
+        "dispatch.const": 1,
+    })
 
 
 def test_dispatch_member_to_child_forwards_alias_to_class_child(
@@ -1137,6 +1196,246 @@ def test_resolve_member_ignores_class_getitem_on_non_pypy(
     assert member is _ClassWithClassGetItem.__dict__["__class_getitem__"].__func__, (
         "off PyPy the bound method must be unwrapped like any other"
     )
+
+
+# Kills the dispatch.dummy.getattr_failure counter survivor tracked in #27.
+def test_object_build_records_getattr_failure_metric(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Skipped members record the dummy getattr-failure counter."""
+    builder = FakeBuilder()
+    node = FakeNode()
+    target = type("SkippingTarget", (), {})
+    attach_calls: list[tuple[object, str]] = []
+
+    monkeypatch.setattr(builtins, "dir", lambda obj: ["missing"])
+    monkeypatch.setattr(
+        _patch,
+        "_resolve_member",
+        lambda node_arg, obj, alias, logger=None: (None, False, True),
+    )
+    monkeypatch.setattr(
+        _patch,
+        "attach_dummy_node",
+        lambda node_arg, alias: attach_calls.append((node_arg, alias)),
+    )
+
+    _patch._object_build_without_pypy_descriptor_aliases(
+        as_inspect_builder(builder), as_astroid_node(node), target
+    )
+
+    assert attach_calls == [(node, "missing")]
+    assert _patch.get_metrics()["dispatch.dummy.getattr_failure"] == 1
+
+
+_SKIP_TEMPLATE = (
+    "Skipping PyPy Astroid object_build patch for unsupported versions "
+    "(pylint {pylint}, astroid {astroid})"
+)
+
+
+# Kills the install_patch version-gate and shape-validation survivors
+# tracked in #28.
+class _VersionGateCase(typ.NamedTuple):
+    """One unsupported-version scenario for the install_patch gate."""
+
+    pylint_version: str | None
+    astroid_version: str | None
+    reported: tuple[str, str]
+
+
+def _set_pypy_versions(
+    monkeypatch: pytest.MonkeyPatch,
+    pylint_version: str | None,
+    astroid_version: str | None,
+) -> None:
+    """Simulate PyPy with the given dependency versions (None removes them)."""
+    astroid = sys.modules["astroid"]
+    pylint = __import__("pylint")
+    monkeypatch.setattr(_patch.sys.implementation, "name", "pypy", raising=False)
+    monkeypatch.delenv("PYLINT_PYPY_SHIM_STRICT", raising=False)
+    for module, version in ((pylint, pylint_version), (astroid, astroid_version)):
+        if version is None:
+            monkeypatch.delattr(module, "__version__", raising=False)
+        else:
+            monkeypatch.setattr(module, "__version__", version)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        _VersionGateCase("5.0.0", "4.0.0", ("5.0.0", "4.0.0")),
+        _VersionGateCase("4.0.0", "5.0.0", ("4.0.0", "5.0.0")),
+        _VersionGateCase(None, None, ("0", "0")),
+    ],
+)
+def test_install_patch_version_gate_reports_exact_versions(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    case: _VersionGateCase,
+) -> None:
+    """One unsupported or missing version skips the patch with exact detail."""
+    _set_pypy_versions(monkeypatch, case.pylint_version, case.astroid_version)
+    original_object_build = _patch.raw_building.InspectBuilder.object_build
+
+    with caplog.at_level(logging.WARNING):
+        _patch.install_patch()
+
+    assert _patch._PATCH_INSTALLED is False
+    assert _patch.raw_building.InspectBuilder.object_build is original_object_build
+    warning_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+    ]
+    assert warning_messages == [
+        _SKIP_TEMPLATE.format(pylint=case.reported[0], astroid=case.reported[1])
+    ]
+
+
+def test_install_patch_strict_error_message_names_versions(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Strict mode raises and logs the exact unsupported-version message."""
+    _set_pypy_versions(monkeypatch, "3.0.0", "9.9.9")
+    monkeypatch.setenv("PYLINT_PYPY_SHIM_STRICT", "1")
+    expected = _SKIP_TEMPLATE.format(pylint="3.0.0", astroid="9.9.9")
+
+    with (
+        caplog.at_level(logging.ERROR),
+        pytest.raises(_patch.PatchError) as excinfo,
+    ):
+        _patch.install_patch()
+
+    assert str(excinfo.value) == expected
+    error_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.ERROR
+    ]
+    assert error_messages == [expected]
+
+
+def test_install_patch_reports_shape_errors_on_supplied_logger(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Shape validation inside `install_patch` uses the caller's logger."""
+    monkeypatch.setattr(_patch.sys.implementation, "name", "pypy", raising=False)
+    monkeypatch.setattr(_patch.raw_building.InspectBuilder, "object_build", None)
+    logger = logging.getLogger("tests.install-shape-logger")
+
+    with (
+        caplog.at_level(logging.ERROR),
+        pytest.raises(_patch.PatchError, match="callable"),
+    ):
+        _patch.install_patch(logger)
+
+    error_records = [
+        record for record in caplog.records if record.levelno == logging.ERROR
+    ]
+    assert [record.name for record in error_records] == [logger.name]
+
+
+def test_validate_astroid_shape_missing_builder_message(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The missing-builder failure logs its exact message on the given logger."""
+    logger = logging.getLogger("tests.shape.missing-builder")
+    monkeypatch.delattr(_patch.raw_building, "InspectBuilder")
+
+    with (
+        caplog.at_level(logging.ERROR),
+        pytest.raises(_patch.PatchError) as excinfo,
+    ):
+        _patch._validate_astroid_shape(logger)
+
+    assert str(excinfo.value) == "astroid.raw_building.InspectBuilder is required"
+    error_records = [
+        record for record in caplog.records if record.levelno == logging.ERROR
+    ]
+    assert [record.name for record in error_records] == [logger.name]
+    assert error_records[0].getMessage() == (
+        "astroid.raw_building.InspectBuilder is required"
+    )
+
+
+def test_validate_astroid_shape_non_callable_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The non-callable failure carries its exact message."""
+    monkeypatch.setattr(_patch.raw_building.InspectBuilder, "object_build", None)
+
+    with pytest.raises(_patch.PatchError) as excinfo:
+        _patch._validate_astroid_shape()
+
+    assert str(excinfo.value) == "InspectBuilder.object_build must be callable"
+
+
+def test_validate_astroid_shape_missing_object_build_raises_patch_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A builder without ``object_build`` fails as PatchError, not AttributeError."""
+
+    class BuilderWithoutObjectBuild:
+        """InspectBuilder stand-in lacking object_build entirely."""
+
+    monkeypatch.setattr(
+        _patch.raw_building, "InspectBuilder", BuilderWithoutObjectBuild
+    )
+
+    with pytest.raises(_patch.PatchError, match="callable"):
+        _patch._validate_astroid_shape()
+
+
+def test_validate_astroid_shape_signature_error_names_signature(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The signature failure logs the message together with the signature."""
+
+    def object_build(self: object, child: object) -> None:
+        del self, child
+
+    monkeypatch.setattr(
+        _patch.raw_building.InspectBuilder, "object_build", object_build
+    )
+    expected_signature = inspect.signature(object_build)
+
+    with (
+        caplog.at_level(logging.ERROR),
+        pytest.raises(_patch.PatchError) as excinfo,
+    ):
+        _patch._validate_astroid_shape()
+
+    assert str(excinfo.value) == "InspectBuilder.object_build signature is unsupported"
+    error_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.ERROR
+    ]
+    assert error_messages == [
+        f"InspectBuilder.object_build signature is unsupported: {expected_signature}"
+    ]
+
+
+def test_validate_astroid_shape_accepts_extra_trailing_parameters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the first three parameters are constrained; extras are tolerated."""
+
+    def object_build(
+        self: object, node: object, obj: object, extra: object = None
+    ) -> None:
+        del self, node, obj, extra
+
+    monkeypatch.setattr(
+        _patch.raw_building.InspectBuilder, "object_build", object_build
+    )
+
+    _patch._validate_astroid_shape()
 
 
 @pytest.mark.parametrize(
