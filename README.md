@@ -1,5 +1,8 @@
 # pylint-pypy-shim
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](
+https://deepwiki.com/leynos/pylint-pypy-shim)
+
 *A tiny PyPy safety shim for running Pylint when Astroid trips over runtime
 introspection.*
 
