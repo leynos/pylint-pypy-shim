@@ -50,10 +50,10 @@ The PyPy-specific behaviour is limited to two compatibility guards:
 `_patch.py`. It returns the caller-provided logger when one is supplied and
 falls back to the module-level `_LOG` logger otherwise.
 
-`_object_build_factory()` returns the patched `object_build` method. The closure
-does not capture the installer logger; it reads `_GLOBAL_LOGGER` at runtime so a
-later supported `install_patch(logger)` call can redirect builder debug logs
-without replacing the Astroid method again.
+`_object_build_factory()` returns the patched `object_build` method. The
+closure does not capture the installer logger; it reads `_GLOBAL_LOGGER` at
+runtime so a later supported `install_patch(logger)` call can redirect builder
+debug logs without replacing the Astroid method again.
 
 `_object_build_with_logger(self, node, obj, logger)` is the inner
 implementation delegate used by both the factory-produced closure and
@@ -169,15 +169,15 @@ test runs before committing.
 
 ## Workflow pins and Dependabot
 
-Dependabot owns the upgrade of GitHub Actions and reusable workflows,
-including calls into `leynos/shared-actions`. Contract tests that assert a
-caller's exact commit SHA create a lockstep dependency: every time Dependabot
-opens a bump PR, the test fails until a human edits the pinned constant to
-match. That defeats the purpose of automated dependency updates and turns a
-routine bump into a manual chore.
+Dependabot owns the upgrade of GitHub Actions and reusable workflows, including
+calls into `leynos/shared-actions`. Contract tests that assert a caller's exact
+commit SHA create a lockstep dependency: every time Dependabot opens a bump PR,
+the test fails until a human edits the pinned constant to match. That defeats
+the purpose of automated dependency updates and turns a routine bump into a
+manual chore.
 
-Contract tests may still verify the *shape* of a reusable-workflow caller.
-They must not verify the specific SHA value.
+Contract tests may still verify the *shape* of a reusable-workflow caller. They
+must not verify the specific SHA value.
 
 - Do assert the workflow references the correct reusable workflow path.
 - Do assert the ref is pinned to a full 40-character commit SHA, not a
