@@ -47,7 +47,7 @@ jobs:
 
       - name: Generate coverage
         if: github.event_name == 'pull_request'
-        uses: leynos/shared-actions/.github/actions/generate-coverage@18bed1ca49a6de3d8882bd72635a32ae3f023d57
+        uses: leynos/shared-actions/.github/actions/generate-coverage@36eb051a22b8f128c8b0a33d2951c961b156c859
         with:
           output-path: coverage.xml
           format: cobertura
