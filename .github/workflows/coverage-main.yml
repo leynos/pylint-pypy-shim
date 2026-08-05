@@ -43,7 +43,7 @@ jobs:
         run: make build
 
       - name: Generate coverage
-        uses: leynos/shared-actions/.github/actions/generate-coverage@19a7f5d1b8d5c1b2236c39720a5744492b3fc129
+        uses: leynos/shared-actions/.github/actions/generate-coverage@2f90d1041ea108148be0620e3bbcc1fa80ac03e4
         with:
           output-path: coverage.xml
           format: cobertura
@@ -52,7 +52,7 @@ jobs:
 
       - name: Upload coverage to CodeScene
         if: env.CS_ACCESS_TOKEN != ''
-        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@19a7f5d1b8d5c1b2236c39720a5744492b3fc129
+        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@2f90d1041ea108148be0620e3bbcc1fa80ac03e4
         with:
           format: cobertura
           access-token: ${{ env.CS_ACCESS_TOKEN }}
