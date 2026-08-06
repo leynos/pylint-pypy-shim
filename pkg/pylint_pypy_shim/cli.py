@@ -26,7 +26,10 @@ def main(argv: list[str] | None = None) -> int:
         if _run_supports_exit_parameter(Run):
             result = Run(args, exit=False)
             return int(getattr(result.linter, "msg_status", 0))
+        # Diagnostic log lines carry no behavioural contract (issue #29).
+        # pragma: no mutate start
         LOGGER.debug("Using legacy pylint.lint.Run API without exit parameter")
+        # pragma: no mutate end
         Run(args)
     except SystemExit as error:
         return _system_exit_code_to_status(error.code)
@@ -41,10 +44,10 @@ def _run_supports_exit_parameter(run: cabc.Callable[..., object]) -> bool:
 def _system_exit_code_to_status(code: object) -> int:
     """Convert legacy Pylint SystemExit payloads into a process status."""
     if code is None:
-        LOGGER.debug("Pylint exited without an explicit status")
+        LOGGER.debug("Pylint exited without an explicit status")  # pragma: no mutate
         return 0
     if isinstance(code, int):
-        LOGGER.debug("Pylint exited with status %s", code)
+        LOGGER.debug("Pylint exited with status %s", code)  # pragma: no mutate
         return code
     LOGGER.warning("Pylint exited with non-integer status %r; returning 0", code)
     return 0
