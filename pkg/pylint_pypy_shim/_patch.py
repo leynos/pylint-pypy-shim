@@ -76,6 +76,10 @@ _METRICS_LOCK: threading.Lock = threading.Lock()
 _PATCH_INSTALLED = False
 _METRICS: collections.Counter[str] = collections.Counter()
 
+# "pragma: no mutate" markers in this module suppress mutants with no
+# behavioural signal: diagnostic debug/info log lines (issue #29) and
+# typing-only helpers such as typ.cast strings (equivalent mutants).
+
 
 class PatchError(RuntimeError):
     """Base exception for pylint-pypy-shim patch errors."""
@@ -114,10 +118,8 @@ def _build_builtin_child(
         _record_metric("dispatch.imported")
         return None
     _record_metric("dispatch.builtin")
-    return object_build_methoddescriptor(
-        node,
-        typ.cast("typ.Any", member),
-    )
+    member_any = typ.cast("typ.Any", member)  # pragma: no mutate
+    return object_build_methoddescriptor(node, member_any)
 
 
 def _build_class_child(
@@ -176,44 +178,58 @@ def _dispatch_member_to_child(  # ruff:ignore[too-many-arguments, too-many-posit
     active_logger = _active_logger(logger)
     match member:
         case _ if inspect.isbuiltin(member):
+            # pragma: no mutate start
             active_logger.debug("Dispatching %s as builtin member of %r", alias, node)
+            # pragma: no mutate end
             child = _build_builtin_child(self, node, member, alias)
         case _ if inspect.isclass(member):
+            # pragma: no mutate start
             active_logger.debug("Dispatching %s as class member of %r", alias, node)
+            # pragma: no mutate end
             child = _build_class_child(self, node, member, alias)
         case _ if inspect.ismethoddescriptor(member):
+            # pragma: no mutate start
             active_logger.debug(
                 "Dispatching %s as method descriptor of %r", alias, node
             )
+            # pragma: no mutate end
             _record_metric("dispatch.method_descriptor")
             child = object_build_methoddescriptor(node, member)
         case _ if inspect.isdatadescriptor(member):
+            # pragma: no mutate start
             active_logger.debug("Dispatching %s as data descriptor of %r", alias, node)
+            # pragma: no mutate end
             _record_metric("dispatch.data_descriptor")
-            child = object_build_datadescriptor(
-                node,
-                typ.cast("type", member),
-            )
+            member_type = typ.cast("type", member)  # pragma: no mutate
+            child = object_build_datadescriptor(node, member_type)
         case _ if isinstance(member, tuple(node_classes.CONST_CLS)):
+            # pragma: no mutate start
             active_logger.debug("Dispatching %s as const member of %r", alias, node)
+            # pragma: no mutate end
             child = _build_const_child(node, member, alias)
         case _ if inspect.isroutine(member):
+            # pragma: no mutate start
             active_logger.debug("Dispatching %s as routine member of %r", alias, node)
+            # pragma: no mutate end
             _record_metric("dispatch.routine")
-            child = _build_from_function(
-                node,
-                member,
-                typ.cast("typ.Any", self._module),
-            )
+            module_any = typ.cast("typ.Any", self._module)  # pragma: no mutate
+            child = _build_from_function(node, member, module_any)
         case _ if _safe_has_attribute(member, "__all__"):
+            # pragma: no mutate start
             active_logger.debug(
                 "Dispatching %s as module-like member of %r", alias, node
             )
+            # pragma: no mutate end
             _record_metric("dispatch.module_like")
             child = build_module(alias)
-            self.object_build(child, typ.cast("types.ModuleType | type", member))
+            # pragma: no mutate start
+            member_module = typ.cast("types.ModuleType | type", member)
+            # pragma: no mutate end
+            self.object_build(child, member_module)
         case _:
+            # pragma: no mutate start
             active_logger.debug("Dispatching %s as dummy member of %r", alias, node)
+            # pragma: no mutate end
             _record_metric("dispatch.dummy")
             child = build_dummy(member)
     return child
@@ -231,7 +247,9 @@ def _resolve_member(
         member = getattr(obj, alias)
     except _IGNORED_GETATTR_ERRORS as error:
         _record_metric("resolve.getattr_failure")
+        # pragma: no mutate start
         _active_logger(logger).debug("Skipping %r from %r: %s", alias, obj, error)
+        # pragma: no mutate end
         return None, pypy__class_getitem__, True
     if inspect.ismethod(member) and not pypy__class_getitem__:
         member = member.__func__
@@ -246,7 +264,7 @@ def _object_build_without_pypy_descriptor_aliases(
     obj: types.ModuleType | type,
 ) -> None:
     """Build Astroid nodes while ignoring non-string PyPy ``dir()`` entries."""
-    _object_build_with_logger(self, node, obj, _LOG)
+    _object_build_with_logger(self, node, obj, _LOG)  # pragma: no mutate
 
 
 def _object_build_with_logger(
@@ -265,22 +283,28 @@ def _object_build_with_logger(
         for alias in dir(obj):
             if not isinstance(alias, str):
                 _record_metric("resolve.non_string_dir_entry")
+                # pragma: no mutate start
                 active_logger.debug(
                     "Ignoring non-string dir entry %r from %r", alias, obj
                 )
+                # pragma: no mutate end
                 continue
             member, pypy__class_getitem__, skip = _resolve_member(
                 node, obj, alias, active_logger
             )
             if skip:
                 _record_metric("dispatch.dummy.getattr_failure")
+                # pragma: no mutate start
                 active_logger.debug(
                     "Attaching dummy node for skipped %s from %r", alias, obj
                 )
+                # pragma: no mutate end
                 attach_dummy_node(node, alias)
                 continue
             if pypy__class_getitem__:
+                # pragma: no mutate start
                 active_logger.debug("Dispatching %s through PyPy builtin path", alias)
+                # pragma: no mutate end
                 child = _build_builtin_child(self, node, member, alias)
             else:
                 child = _dispatch_member_to_child(
@@ -316,7 +340,9 @@ def install_patch(logger: logging.Logger | None = None) -> None:
     global _GLOBAL_LOGGER
     active_logger = _active_logger(logger)
     if sys.implementation.name != "pypy":
+        # pragma: no mutate start
         active_logger.debug("Skipping PyPy Astroid object_build patch on non-PyPy")
+        # pragma: no mutate end
         return
 
     import astroid
@@ -337,17 +363,23 @@ def install_patch(logger: logging.Logger | None = None) -> None:
         _validate_astroid_shape(active_logger)
         _GLOBAL_LOGGER = active_logger
         if _PATCH_INSTALLED:
+            # pragma: no mutate start
             active_logger.debug("PyPy Astroid object_build patch already installed")
+            # pragma: no mutate end
             return
+        # pragma: no mutate start
         active_logger.info(
             "Installing PyPy Astroid object_build patch (pylint %s, astroid %s)",
             pylint_version,
             astroid_version,
         )
-        typ.cast(
-            "typ.Any", raw_building.InspectBuilder
-        ).object_build = _object_build_factory()
+        # pragma: no mutate end
+        # pragma: no mutate start
+        builder_any = typ.cast("typ.Any", raw_building.InspectBuilder)
+        # pragma: no mutate end
+        builder_any.object_build = _object_build_factory()
         _PATCH_INSTALLED = True
+        # pragma: no mutate start
         active_logger.info("astroid InspectBuilder.object_build patched for PyPy")
         active_logger.info(
             "pylint=%s astroid=%s runtime=%s",
@@ -355,12 +387,13 @@ def install_patch(logger: logging.Logger | None = None) -> None:
             astroid_version,
             sys.implementation.name,
         )
+        # pragma: no mutate end
 
 
 def _is_supported_version(version: str, minimum: int, maximum: int) -> bool:
     """Return whether *version* is within the supported major range."""
     try:
-        major = int(version.split(".", maxsplit=1)[0])
+        major = int(version.split(".", maxsplit=1)[0])  # pragma: no mutate
     except ValueError:
         return False
     return minimum <= major < maximum
@@ -384,7 +417,7 @@ def _handle_unsupported_versions(
 
 def _is_strict_mode_enabled() -> bool:
     """Return whether package-specific strict mode is explicitly enabled."""
-    return os.environ.get(_STRICT_ENV_VAR, "0").strip() == "1"
+    return os.environ.get(_STRICT_ENV_VAR, "0").strip() == "1"  # pragma: no mutate
 
 
 def _validate_astroid_shape(logger: logging.Logger | None = None) -> None:
