@@ -180,10 +180,11 @@ manual dispatch (automerged changes do not fire push workflows), binds
 `CS_ACCESS_TOKEN` on its upload step alone, guards that step on exactly
 `env.CS_ACCESS_TOKEN != '' && github.ref == 'refs/heads/main'` so a dispatch
 from another branch cannot upload, uploads with `mode: upload`, and declares a
-concurrency group that never cancels: GitHub keeps one pending run per group,
-so a newer push replaces an older pending run and the newest baseline wins. The
-uploader pins the CodeScene CLI through its own manifest, so no checksum input
-or `CODESCENE_CLI_SHA256` variable is used.
+concurrency group, keyed on the ref, that never cancels: GitHub keeps one
+pending run per group, so a newer push replaces an older pending run and the
+newest baseline wins, and a dispatch from another branch cannot displace a
+pending main run. The uploader pins the CodeScene CLI through its own manifest,
+so no checksum input or `CODESCENE_CLI_SHA256` variable is used.
 
 The reason is the call, not the artefact: the CLI talks to CodeScene's API,
 whose answers have changed shape and failed every pull request at once, and a
@@ -203,10 +204,10 @@ it names. The readings live in `tests/workflow_contracts/`:
   under either key, and walks every key and value of a document.
 - `workflow_closure.py` computes the pull-request surface: workflows triggered
   by `pull_request`, `pull_request_target`, `pull_request_review`,
-  `pull_request_review_comment`, `merge_group`, or `workflow_run`, or by a push
-  to any branch other than `main`, and every local workflow or composite action
-  they reach through `./` or `$/` references. It refuses qualified self-calls
-  and local references carrying `@ref`.
+  `pull_request_review_comment`, `merge_group`, `issue_comment`, or
+  `workflow_run`, or by a push to any branch other than `main`, and every local
+  workflow or composite action they reach through `./` or `$/` references. It
+  refuses qualified self-calls and local references carrying `@ref`.
 - `codescene_reach.py` and `codescene_publisher.py` hold the CodeScene clauses.
 
 The two generic modules know nothing about CodeScene and may be reused by any
