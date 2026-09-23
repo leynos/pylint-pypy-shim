@@ -43,13 +43,16 @@ jobs:
       - name: Run typechecker
         run: make typecheck
 
+      # Coverage runs on pull requests only, ratcheting against the
+      # baseline coverage-main.yml writes on pushes to main; that workflow
+      # is also the only one that uploads to CodeScene. Nothing here
+      # publishes the report.
       - name: Generate coverage
         if: github.event_name == 'pull_request'
-        uses: leynos/shared-actions/.github/actions/generate-coverage@152d9c4784d0ae5877938a984fe6d1f04d718fd8
+        uses: leynos/shared-actions/.github/actions/generate-coverage@a5765019912a8ab6882b12db049c7cde635f3a85
         with:
-          language: python
-          python-source: pkg
           output-path: coverage.xml
           format: cobertura
           pytest-workers: ''
           with-ratchet: 'true'
+          publish-artefact: 'false'

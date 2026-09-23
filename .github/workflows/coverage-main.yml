@@ -1,20 +1,37 @@
 name: Coverage (main)
 
-# Pull requests use the coverage baseline saved by this main-push workflow.
-# They do not contact CodeScene or receive its credentials.
+# The single CodeScene publisher. CodeScene accepts `cs-coverage upload`
+# only for analysed branches, so main's coverage is uploaded here on
+# push. Pull requests generate coverage with the ratchet this workflow
+# advances, and nothing a pull request runs receives CodeScene
+# credentials or contacts CodeScene.
+# tests/workflow_contracts/test_codescene_coverage_contract.py holds the
+# shape.
+#
+# workflow_dispatch is required, not optional: merges performed by the
+# dependabot-automerge workflow's GITHUB_TOKEN do not fire push-event
+# workflows, so automerged changes to main only get coverage uploaded via
+# a manual dispatch re-run. A dispatch can aim at any branch, which is
+# why the upload step is guarded on the ref as well as the token.
 
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+
+# One publisher run at a time, never cancelled. GitHub keeps one pending
+# run per group, so a newer push replaces an older pending run and never
+# interrupts a running one; the newest baseline wins. A cancelled run
+# would abandon both its upload and its ratchet baseline write.
+concurrency:
+  group: coverage-main
+  cancel-in-progress: false
 
 jobs:
   coverage-upload:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      CS_ACCESS_TOKEN: ${{ secrets.CS_ACCESS_TOKEN }}
-      CODESCENE_CLI_SHA256: ${{ vars.CODESCENE_CLI_SHA256 }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
@@ -31,20 +48,22 @@ jobs:
         run: make build
 
       - name: Generate coverage
-        uses: leynos/shared-actions/.github/actions/generate-coverage@152d9c4784d0ae5877938a984fe6d1f04d718fd8
+        uses: leynos/shared-actions/.github/actions/generate-coverage@a5765019912a8ab6882b12db049c7cde635f3a85
         with:
-          language: python
-          python-source: pkg
           output-path: coverage.xml
           format: cobertura
           pytest-workers: ''
           with-ratchet: 'true'
 
       - name: Upload coverage to CodeScene
-        if: env.CS_ACCESS_TOKEN != ''
-        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@152d9c4784d0ae5877938a984fe6d1f04d718fd8
+        # The token binds here and nowhere else in the workflow.
+        env:
+          CS_ACCESS_TOKEN: ${{ secrets.CS_ACCESS_TOKEN }}
+        if: env.CS_ACCESS_TOKEN != '' && github.ref == 'refs/heads/main'
+        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@a5765019912a8ab6882b12db049c7cde635f3a85
         with:
           format: cobertura
           mode: upload
           access-token: ${{ env.CS_ACCESS_TOKEN }}
-          installer-checksum: ${{ env.CODESCENE_CLI_SHA256 }}
+          # No checksum input: the action pins the CLI through its own
+          # manifest, and `installer-checksum` is rejected from this pin.
