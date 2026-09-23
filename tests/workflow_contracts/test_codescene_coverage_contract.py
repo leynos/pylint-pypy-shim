@@ -28,8 +28,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.workflow_contracts.codescene_binding import binding_violations
 from tests.workflow_contracts.codescene_publisher import (
-    binding_violations,
     concurrency_violations,
     conjuncts,
     guard_violations,
@@ -191,10 +191,15 @@ def test_the_upload_is_guarded_on_the_ref_and_the_token(
     assert not violations, f"upload guard: {violations}"
 
 
-def test_the_token_is_bound_on_the_upload_step_alone(
+def test_the_token_is_bound_on_the_check_step_and_passed_as_input(
     documents: dict[str, Document],
 ) -> None:
-    """The step binds the secret and passes it; no other scope holds it."""
+    """A check step binds the secret; the upload takes it as its input alone.
+
+    The upload action is composite and passes its step ``env`` to nested
+    upload-artifact and cache steps, so the token stays out of that
+    ``env``; the check step reports only whether the token is set.
+    """
     _, document = publisher(documents)
     violations = binding_violations(document, upload_step(document))
     assert not violations, f"token binding: {violations}"

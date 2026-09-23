@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.workflow_contracts.codescene_binding import binding_violations
 from tests.workflow_contracts.codescene_publisher import (
-    binding_violations,
     concurrency_violations,
     guard_violations,
     input_violations,
@@ -31,12 +31,33 @@ from tests.workflow_contracts.workflow_reading import (
 #: A full-length commit pin, as the publisher rules require.
 PIN = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-PUBLISHER = """\
+#: The check step: binds nothing and reports only whether the token is set.
+CHECK = """\
+      - name: Check CodeScene token
+        id: codescene-token
+        run: echo "available=${{ secrets.CS_ACCESS_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+"""
+
+#: The upload step: guarded on the check's output and the ref, and handed
+#: the token as its input alone.
+UPLOAD = """\
+      - name: Upload
+        if: >-
+          steps.codescene-token.outputs.available == 'true'
+          && github.ref == 'refs/heads/main'
+        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@<pin>
+        with:
+          mode: upload
+          access-token: ${{ secrets.CS_ACCESS_TOKEN }}
+"""
+
+PUBLISHER = (
+    """\
 on:
   push:
     branches: [main]
 concurrency:
-  group: coverage-main-${{ github.ref }}-${{ github.event_name }}
+  group: coverage-main-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   publish:
@@ -46,15 +67,10 @@ jobs:
         uses: leynos/shared-actions/.github/actions/generate-coverage@<pin>
         with:
           with-ratchet: 'true'
-      - name: Upload
-        env:
-          CS_ACCESS_TOKEN: ${{ secrets.CS_ACCESS_TOKEN }}
-        if: env.CS_ACCESS_TOKEN != '' && github.ref == 'refs/heads/main'
-        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@<pin>
-        with:
-          mode: upload
-          access-token: ${{ env.CS_ACCESS_TOKEN }}
-""".replace("<pin>", PIN)
+"""
+    + CHECK
+    + UPLOAD
+).replace("<pin>", PIN)
 
 
 def _publisher_violations(text: str) -> list[str]:
@@ -100,10 +116,16 @@ def test_the_compliant_publisher_passes() -> None:
             id="sweep-3-neutralizing-conjunct",
         ),
         pytest.param(
-            " && github.ref == 'refs/heads/main'",
+            "\n          && github.ref == 'refs/heads/main'",
             "",
             "guard",
             id="sweep-3-ref-guard-deleted",
+        ),
+        pytest.param(
+            "steps.codescene-token.outputs.available == 'true'",
+            "env.CS_ACCESS_TOKEN != ''",
+            "guard",
+            id="sweep-8-guard-reads-an-unbound-env",
         ),
         pytest.param(
             "  cancel-in-progress: false",
@@ -112,27 +134,27 @@ def test_the_compliant_publisher_passes() -> None:
             id="sweep-6-cancel",
         ),
         pytest.param(
-            "group: coverage-main-${{ github.ref }}-${{ github.event_name }}",
+            "group: coverage-main-${{ github.ref }}",
             "group: coverage-main",
-            "is not keyed on",
+            "is not exactly",
             id="sweep-6-group-shared-across-refs",
         ),
         pytest.param(
-            "group: coverage-main-${{ github.ref }}-${{ github.event_name }}",
-            "group: coverage-main-github.ref-github.event_name",
-            "is not keyed on",
+            "group: coverage-main-${{ github.ref }}",
+            "group: coverage-main-github.ref",
+            "is not exactly",
             id="sweep-6-group-names-the-ref-unevaluated",
         ),
         pytest.param(
-            "group: coverage-main-${{ github.ref }}-${{ github.event_name }}",
             "group: coverage-main-${{ github.ref }}",
-            "is not keyed on",
-            id="sweep-6-group-shared-by-push-and-dispatch",
+            "group: coverage-main-${{ github.ref }}-${{ github.event_name }}",
+            "is not exactly",
+            id="sweep-6-group-keyed-on-event",
         ),
         pytest.param(
             "    runs-on: ubuntu-latest\n",
             "    runs-on: ubuntu-latest\n    concurrency:\n      group: publish\n",
-            "'publish' is not keyed on",
+            "job publish declares its own concurrency",
             id="sweep-6-constant-job-group",
         ),
         pytest.param(
@@ -143,7 +165,7 @@ def test_the_compliant_publisher_passes() -> None:
         ),
         pytest.param(
             "concurrency:\n"
-            "  group: coverage-main-${{ github.ref }}-${{ github.event_name }}\n"
+            "  group: coverage-main-${{ github.ref }}\n"
             "  cancel-in-progress: false\n",
             "",
             "no workflow-level concurrency group",
@@ -152,25 +174,20 @@ def test_the_compliant_publisher_passes() -> None:
         pytest.param(
             "    runs-on: ubuntu-latest\n",
             "    runs-on: ubuntu-latest\n    concurrency:\n"
-            "      group: x-${{ github.ref }}-${{ github.event_name }}\n"
+            "      group: x-${{ github.ref }}\n"
             "      cancel-in-progress: true\n",
             "cancel-in-progress 'true'",
             id="sweep-6-job-level-cancel",
         ),
         pytest.param(
-            "        env:\n          CS_ACCESS_TOKEN: ${{ secrets.CS_ACCESS_TOKEN }}\n",
-            "",
-            "does not bind",
-            id="sweep-8-binding-deleted",
+            "        id: codescene-token\n",
+            "        id: codescene-token\n        env:\n"
+            "          CS_ACCESS_TOKEN: ${{ secrets.CS_ACCESS_TOKEN }}\n",
+            "the check step declares env",
+            id="sweep-8-check-binds-env",
         ),
         pytest.param(
-            "CS_ACCESS_TOKEN: ${{ secrets.CS_ACCESS_TOKEN }}",
-            "CS_ACCESS_TOKEN: ''",
-            "does not bind",
-            id="sweep-8-binding-emptied",
-        ),
-        pytest.param(
-            "          access-token: ${{ env.CS_ACCESS_TOKEN }}\n",
+            "          access-token: ${{ secrets.CS_ACCESS_TOKEN }}\n",
             "",
             "does not pass access-token",
             id="sweep-8-access-token-deleted",
@@ -181,6 +198,50 @@ def test_the_compliant_publisher_passes() -> None:
             "      CS_ACCESS_TOKEN: ${{ secrets.CS_ACCESS_TOKEN }}\n",
             "also reached at jobs.publish.env",
             id="sweep-8-token-also-in-job-env",
+        ),
+        pytest.param(
+            "      - name: Upload\n",
+            "      - name: Upload\n        env:\n"
+            "          CS_ACCESS_TOKEN: ${{ secrets.CS_ACCESS_TOKEN }}\n",
+            "the upload step's env",
+            id="sweep-8-token-in-upload-env",
+        ),
+        pytest.param(
+            "        id: codescene-token\n",
+            "        id: codescene-token\n        if: false\n",
+            "the check step has if:",
+            id="sweep-8-check-step-condition",
+        ),
+        pytest.param(
+            "CS_ACCESS_TOKEN != ''",
+            "CS_ACCESS_TOKEN == ''",
+            "does not run exactly",
+            id="sweep-8-check-command-changed",
+        ),
+        pytest.param(
+            "      - name: Check CodeScene token\n",
+            "      - name: Check CodeScene token\n        with:\n"
+            "          echo: ${{ secrets.CS_ACCESS_TOKEN }}\n",
+            "also reached at check step with.echo",
+            id="sweep-8-token-elsewhere-in-check-step",
+        ),
+        pytest.param(
+            "        id: codescene-token\n",
+            "        id: token-check\n",
+            "no step with id",
+            id="sweep-8-check-step-missing",
+        ),
+        pytest.param(
+            CHECK,
+            "",
+            "no step with id",
+            id="sweep-8-check-step-deleted",
+        ),
+        pytest.param(
+            CHECK + UPLOAD.replace("<pin>", PIN),
+            UPLOAD.replace("<pin>", PIN) + CHECK,
+            "no step with id",
+            id="sweep-8-check-after-upload",
         ),
         pytest.param(
             "    runs-on: ubuntu-latest\n",

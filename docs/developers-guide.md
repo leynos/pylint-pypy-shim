@@ -176,15 +176,25 @@ request runs invokes CodeScene, runs `cs-coverage`, receives `CS_ACCESS_TOKEN`,
 or names the CodeScene host.
 
 `coverage-main.yml` is the single publisher. It runs on pushes to `main` and on
-manual dispatch (automerged changes do not fire push workflows), binds
-`CS_ACCESS_TOKEN` on its upload step alone, guards that step on exactly
-`env.CS_ACCESS_TOKEN != '' && github.ref == 'refs/heads/main'` so a dispatch
-from another branch cannot upload, uploads with `mode: upload`, and declares a
-concurrency group, keyed on the ref and the event, that never cancels: GitHub
-keeps one pending run per group, so a newer push replaces an older pending run
-and the newest baseline wins, while a dispatch cannot displace a pending push
-to main. The uploader pins the CodeScene CLI through its own manifest, so no
-checksum input or `CODESCENE_CLI_SHA256` variable is used.
+manual dispatch, reports whether `CS_ACCESS_TOKEN` is set from a
+`codescene-token` check step that binds nothing, passes the secret to the
+upload action as `access-token` (never in any `env`, which the composite action
+hands to its nested steps), guards the upload on exactly
+`steps.codescene-token.outputs.available == 'true' && github.ref == 'refs/heads/main'`
+so a dispatch from another branch cannot upload, uploads with `mode: upload`,
+and declares a concurrency group keyed on the ref alone that never cancels:
+GitHub keeps one pending run per group, so triggered runs (push and dispatch)
+never overlap and the newest one's coverage lands last. A manual re-run of an
+older run is an operator action that republishes that commit's coverage and
+baseline until the next push supersedes it. The uploader pins the CodeScene CLI
+through its own manifest, so no checksum input or `CODESCENE_CLI_SHA256`
+variable is used.
+
+Dependabot automerge merges are made with `GITHUB_TOKEN`, which fires no push
+workflow, so they are a known exception: their coverage is published by the
+next push to `main` or a manual dispatch. A dispatch that replaces a pending
+push leaves the ratchet baseline one commit behind until the next push, because
+only a push saves it. Both are tracked as issue 518 in leynos/shared-actions.
 
 The reason is the call, not the artefact: the CLI talks to CodeScene's API,
 whose answers have changed shape and failed every pull request at once, and a

@@ -13,10 +13,11 @@ from __future__ import annotations
 import re
 import typing as typ
 
+from tests.workflow_contracts.codescene_binding import CHECK_STEP_ID
 from tests.workflow_contracts.codescene_reach import (
     COVERAGE_ACTION,
-    CREDENTIAL,
     UPLOAD_ACTION,
+    normalized,
     upload_references,
 )
 from tests.workflow_contracts.workflow_reading import (
@@ -25,7 +26,6 @@ from tests.workflow_contracts.workflow_reading import (
     all_steps,
     filter_names,
     jobs,
-    scalars,
     steps,
     triggers,
 )
@@ -38,15 +38,9 @@ if typ.TYPE_CHECKING:
 #: disables the upload with nothing failing, and an ``||`` anywhere lands
 #: inside some conjunct and so fails the comparison too.
 UPLOAD_GUARD: typ.Final[frozenset[str]] = frozenset({
-    f"env.{CREDENTIAL} != ''",
+    f"steps.{CHECK_STEP_ID}.outputs.available == 'true'",
     "github.ref == 'refs/heads/main'",
 })
-
-#: The positive bindings. A guard on ``env.CS_ACCESS_TOKEN != ''`` passes
-#: with the binding deleted, because a missing property reads as ``''``
-#: and the upload then skips forever; so the binding itself is required.
-STEP_BINDING: typ.Final[str] = f"${{{{ secrets.{CREDENTIAL} }}}}"
-ACCESS_TOKEN_INPUT: typ.Final[str] = f"${{{{ env.{CREDENTIAL} }}}}"
 
 #: The triggers a publisher may declare. A dispatch can aim at any
 #: branch, which is why the ref guard is required on the step.
@@ -58,27 +52,17 @@ PUBLISHER_TRIGGERS: typ.Final[frozenset[str]] = frozenset({
 #: A full-length commit pin.
 PINNED_COMMIT: typ.Final[re.Pattern[str]] = re.compile(r"@[0-9a-f]{40}$")
 
-#: The expressions every publisher concurrency group must evaluate. The
-#: ref keeps a branch dispatch out of main's group; the event keeps a
-#: dispatch on main from replacing a pending push, since only a push
-#: writes the ratchet baseline. The expressions, not the words: a
-#: literal ``coverage-main-github.ref-github.event_name`` names both and
-#: evaluates neither, so every run would still share one group.
-_GROUP_KEYS: typ.Final[tuple[re.Pattern[str], ...]] = (
-    re.compile(r"\$\{\{\s*github\.ref\s*\}\}"),
-    re.compile(r"\$\{\{\s*github\.event_name\s*\}\}"),
-)
-
-
-def _normalized(text: object) -> str:
-    """Return text with runs of whitespace collapsed to single spaces.
-
-    Returns
-    -------
-    str
-        The normalized text.
-    """
-    return " ".join(str(text).split())
+#: The publisher's concurrency group, exactly: keyed on the ref and
+#: nothing else. With one group per ref, runs never overlap and the
+#: survivor of any replacement is the newest trigger, whose commit is the
+#: newest main at trigger time, so triggered runs (push and dispatch)
+#: upload in commit order. A manual re-run of an older main run keeps its
+#: old commit: an operator action that republishes that commit's coverage
+#: and baseline until the next push supersedes it. Keying on
+#: the event as well would let an earlier dispatch finish after a newer
+#: push and upload older coverage last; a constant group would let a
+#: branch dispatch replace main's pending run and then skip the upload.
+PUBLISHER_GROUP: typ.Final[str] = "coverage-main-${{ github.ref }}"
 
 
 def conjuncts(condition: object) -> frozenset[str]:
@@ -94,10 +78,10 @@ def conjuncts(condition: object) -> frozenset[str]:
     >>> sorted(conjuncts("${{ a == 'b' &&  c }}"))
     ["a == 'b'", 'c']
     """
-    body = _normalized(condition)
+    body = normalized(condition)
     if body.startswith("${{") and body.endswith("}}"):
         body = body[3:-2]
-    return frozenset(_normalized(term) for term in body.split("&&"))
+    return frozenset(normalized(term) for term in body.split("&&"))
 
 
 def uploaders(documents: dict[str, Document]) -> list[str]:
@@ -190,51 +174,6 @@ def guard_violations(step: dict[object, object]) -> list[str]:
     return [f"guard {sorted(found)} is not {sorted(UPLOAD_GUARD)}"]
 
 
-def binding_violations(document: Document, step: dict[object, object]) -> list[str]:
-    """Return why the token is not bound on the upload step alone.
-
-    Returns
-    -------
-    list[str]
-        One entry per violation.
-    """
-    env = step.get("env")
-    inputs = step.get("with")
-    found = []
-    if not isinstance(env, dict) or _normalized(env.get(CREDENTIAL)) != STEP_BINDING:
-        found.append(f"the upload step does not bind {CREDENTIAL}: {STEP_BINDING}")
-    if not isinstance(inputs, dict) or _normalized(inputs.get("access-token")) != (
-        ACCESS_TOKEN_INPUT
-    ):
-        found.append(
-            f"the upload step does not pass access-token: {ACCESS_TOKEN_INPUT}"
-        )
-    elsewhere = [
-        scalar.path
-        for scalar in scalars({**document, "jobs": _without(document, step)})
-        if CREDENTIAL.casefold() in scalar.text.casefold()
-    ]
-    found += [f"{CREDENTIAL} also reached at {path}" for path in elsewhere]
-    return found
-
-
-def _without(document: Document, step: dict[object, object]) -> dict[str, object]:
-    """Return a document's jobs with one step removed, for sweeping the rest.
-
-    Returns
-    -------
-    dict[str, object]
-        Job name to job, without the step.
-    """
-    return {
-        name: {
-            **job,
-            "steps": [other for other in steps(job) if other is not step],
-        }
-        for name, job in jobs(document).items()
-    }
-
-
 def input_violations(step: dict[object, object]) -> list[str]:
     """Return why an upload step does not upload, pinned.
 
@@ -257,14 +196,9 @@ def concurrency_violations(document: Document) -> list[str]:
     A concurrency group without ``cancel-in-progress`` keeps one pending
     run per group: a newer push replaces an older pending run and never
     cancels a running one, so the newest baseline wins. A cancelled run
-    abandons both its upload and its baseline write. Every group, at
-    workflow and job level, must evaluate ``${{ github.ref }}`` and
-    ``${{ github.event_name }}``: a dispatch from another branch would
-    otherwise join main's group, replace main's pending run, and then
-    skip the ref-guarded upload, so that main commit never publishes;
-    and a dispatch on main would replace a pending push without writing
-    the baseline, which only a push saves. A constant group at either level
-    collides, whatever the other level is keyed on.
+    abandons both its upload and its baseline write. The workflow's group
+    must be exactly ``PUBLISHER_GROUP``, and no job may declare a group of
+    its own, since a second group would let runs overlap.
 
     Returns
     -------
@@ -276,22 +210,27 @@ def concurrency_violations(document: Document) -> list[str]:
         return [f"no workflow-level concurrency group: {declared!r}"]
     job_scopes = (job.get("concurrency") for job in jobs(document).values())
     scopes = [scope for scope in [declared, *job_scopes] if isinstance(scope, dict)]
-    return _unkeyed_groups(scopes) + _cancelling_scopes(scopes)
+    return _group_violations(document, declared) + _cancelling_scopes(scopes)
 
 
-def _unkeyed_groups(scopes: list[dict[object, object]]) -> list[str]:
-    """Return the concurrency groups that do not evaluate the ref and event.
+def _group_violations(document: Document, declared: dict[object, object]) -> list[str]:
+    """Return why the publisher's runs do not share exactly one group per ref.
 
     Returns
     -------
     list[str]
-        One entry per unkeyed group.
+        One entry for a wrong workflow group and one per job-level group.
     """
-    return [
-        f"concurrency group {scope['group']!r} is not keyed on the ref and event"
-        for scope in scopes
-        if "group" in scope
-        and not all(key.search(str(scope["group"])) for key in _GROUP_KEYS)
+    group = normalized(declared.get("group"))
+    found = (
+        []
+        if group == PUBLISHER_GROUP
+        else [f"concurrency group {group!r} is not exactly {PUBLISHER_GROUP!r}"]
+    )
+    return found + [
+        f"job {name} declares its own concurrency"
+        for name, job in jobs(document).items()
+        if "concurrency" in job
     ]
 
 
@@ -306,7 +245,7 @@ def _cancelling_scopes(scopes: list[dict[object, object]]) -> list[str]:
     return [
         f"cancel-in-progress {scope.get('cancel-in-progress')!r}"
         for scope in scopes
-        if _normalized(scope.get("cancel-in-progress", "false")) != "false"
+        if normalized(scope.get("cancel-in-progress", "false")) != "false"
     ]
 
 
@@ -341,7 +280,7 @@ def _swallows_failure(item: dict[object, object]) -> bool:
     bool
         True when a failure there would not fail the run.
     """
-    return _normalized(item.get("continue-on-error", "false")) != "false"
+    return normalized(item.get("continue-on-error", "false")) != "false"
 
 
 def swallowed_failures(document: Document) -> list[str]:
