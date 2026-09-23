@@ -34,6 +34,7 @@ extend-ignore-re = [
     "Azure\\s+Architecture\\s+Center\\s*\\|\\s*Microsoft\\s+Learn\\b",
     "GitHub\\s+Flavored\\s+Markdown\\b(?:\\s\\(GFM\\))?",
     "\\brust-analyzer\\b",
+    "`color`",
 ]
 
 [default.extend-words]
@@ -310,7 +311,6 @@ extend-ignore-re = [
 "colonizers" = "colonizers"
 "colonizes" = "colonizes"
 "colonizing" = "colonizing"
-"color" = "color"
 "colourisable" = "colourizable"
 "colourisation" = "colourization"
 "colourisations" = "colourizations"

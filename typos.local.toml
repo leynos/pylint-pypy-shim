@@ -9,13 +9,17 @@ stems = []
 accepted = [
   "Astroid",
   "Flavored",
-  "color",
 ]
 
 [words.corrections]
 
 [patterns]
-ignore = []
+# The documentation style guide quotes `color` as its example of a US
+# spelling an external API requires; only that inline-code literal is
+# exempt, so prose still has to spell "colour".
+ignore = [
+  "`color`",
+]
 
 [files]
 exclude = []
