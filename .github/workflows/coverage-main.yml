@@ -1,32 +1,44 @@
 name: Coverage (main)
 
-# CodeScene accepts `cs-coverage upload` only for analysed branches, so
-# main-branch coverage is uploaded here on push. Pull requests only
-# generate coverage today (see ci.yml); the changed-line gate
-# (`cs-coverage check`) is deferred until CodeScene enables the coverage
-# gate for project 80100. This workflow also advances the coverage
-# ratchet baseline: caches saved on main are readable by every
-# pull-request run, so the baseline written here is the one ci.yml's
-# ratchet check compares against.
+# The single CodeScene publisher. CodeScene accepts `cs-coverage upload`
+# only for analysed branches, so main's coverage is uploaded here on
+# push. Pull requests generate coverage with the ratchet this workflow
+# advances, and nothing a pull request runs receives CodeScene
+# credentials or contacts CodeScene.
+# tests/workflow_contracts/test_codescene_coverage_contract.py holds the
+# shape.
 #
 # workflow_dispatch is required, not optional: merges performed by the
 # dependabot-automerge workflow's GITHUB_TOKEN do not fire push-event
 # workflows, so automerged changes to main only get coverage uploaded via
-# a manual dispatch re-run.
+# a manual dispatch re-run. A dispatch can aim at any branch, which is
+# why the upload step is guarded on the ref as well as the token.
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
+# One publisher run per ref at a time, never cancelled. GitHub keeps one
+# pending run per group, so a newer push replaces an older pending run
+# and never interrupts a running one; the newest baseline wins. A
+# cancelled run would abandon both its upload and its ratchet baseline
+# write. The group is keyed on the ref alone: a branch dispatch cannot
+# displace a pending main run, and with one group for main, runs never
+# overlap and the newest triggered run's coverage lands last. A manual
+# re-run of an older run is an operator action that republishes that
+# commit's coverage and baseline until the next push. A dispatch that
+# replaces a pending push leaves the ratchet baseline one commit behind
+# until the next push, because only a push saves it.
+concurrency:
+  group: coverage-main-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   coverage-upload:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      CS_ACCESS_TOKEN: ${{ secrets.CS_ACCESS_TOKEN }}
-      CODESCENE_CLI_SHA256: ${{ vars.CODESCENE_CLI_SHA256 }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v4
@@ -43,17 +55,29 @@ jobs:
         run: make build
 
       - name: Generate coverage
-        uses: leynos/shared-actions/.github/actions/generate-coverage@2f90d1041ea108148be0620e3bbcc1fa80ac03e4
+        uses: leynos/shared-actions/.github/actions/generate-coverage@a5765019912a8ab6882b12db049c7cde635f3a85
         with:
           output-path: coverage.xml
           format: cobertura
           pytest-workers: ''
           with-ratchet: 'true'
 
+      # Whether the token is set, as a plain output. The expression is
+      # evaluated before the shell runs, so this step binds nothing: the
+      # token is in no step's env, because the upload action is composite
+      # and passes its step env to nested upload-artifact and cache steps.
+      - name: Check CodeScene token
+        id: codescene-token
+        run: echo "available=${{ secrets.CS_ACCESS_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
       - name: Upload coverage to CodeScene
-        if: env.CS_ACCESS_TOKEN != ''
-        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@2f90d1041ea108148be0620e3bbcc1fa80ac03e4
+        if: >-
+          steps.codescene-token.outputs.available == 'true'
+          && github.ref == 'refs/heads/main'
+        uses: leynos/shared-actions/.github/actions/upload-codescene-coverage@a5765019912a8ab6882b12db049c7cde635f3a85
         with:
           format: cobertura
-          access-token: ${{ env.CS_ACCESS_TOKEN }}
-          installer-checksum: ${{ env.CODESCENE_CLI_SHA256 }}
+          mode: upload
+          access-token: ${{ secrets.CS_ACCESS_TOKEN }}
+          # No checksum input: the action pins the CLI through its own
+          # manifest, and `installer-checksum` is rejected from this pin.
