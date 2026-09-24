@@ -218,7 +218,8 @@ it names. The readings live in `tests/workflow_contracts/`:
   `workflow_run`, or by a push to any branch other than `main`, and every local
   workflow or composite action they reach through `./` or `$/` references. It
   refuses qualified self-calls and local references carrying `@ref`.
-- `codescene_reach.py` and `codescene_publisher.py` hold the CodeScene clauses.
+- `codescene_reach.py`, `codescene_publisher.py`, and `codescene_binding.py`
+  hold the CodeScene clauses.
 
 The two generic modules know nothing about CodeScene and may be reused by any
 workflow contract in this repository. They are test support only: nothing under
