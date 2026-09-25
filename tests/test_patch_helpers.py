@@ -1,8 +1,13 @@
-"""Unit tests for the PyPy-safe Astroid patch helpers."""
+"""Unit tests for the PyPy-safe Astroid patch helpers.
+
+Kills the ``_build_builtin_child`` untested-path survivors tracked in #24
+and the dispatch argument-propagation survivors tracked in #26.
+"""
 
 from __future__ import annotations
 
 import builtins
+import collections
 import concurrent.futures
 import inspect
 import logging
@@ -974,3 +979,221 @@ def test_validate_astroid_shape_rejects_unsupported_signature(
         _patch._validate_astroid_shape()
 
     assert "signature is unsupported" in caplog.text
+
+
+class _RecordingImportedBuilder(FakeBuilder):
+    """Builder whose ``imported_member`` records arguments and returns a preset."""
+
+    def __init__(self, *, imported: bool) -> None:
+        """Store the canned ``imported_member`` verdict."""
+        super().__init__()
+        self._imported = imported
+        self.imported_member_calls: list[tuple[object, object, str]] = []
+
+    def imported_member(self, node: object, member: object, alias: str) -> bool:
+        """Record the exact arguments and return the canned verdict."""
+        self.imported_member_calls.append((node, member, alias))
+        return self._imported
+
+
+def test_build_builtin_child_returns_none_for_imported_member() -> None:
+    """Imported members yield no child and forward exact arguments."""
+    builder = _RecordingImportedBuilder(imported=True)
+    node = FakeNode()
+
+    result = _patch._build_builtin_child(
+        as_inspect_builder(builder), as_astroid_node(node), len, "len"
+    )
+
+    assert result is None
+    assert builder.imported_member_calls == [(node, len, "len")]
+    assert _patch.get_metrics() == collections.Counter({"dispatch.imported": 1})
+
+
+def test_build_builtin_child_builds_method_descriptor_for_builtin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-imported builtins build a method descriptor for the exact member."""
+    builder = _RecordingImportedBuilder(imported=False)
+    node = FakeNode()
+    child = object()
+    build_calls: list[tuple[object, object]] = []
+
+    def fake_methoddescriptor(node_arg: object, member_arg: object) -> object:
+        build_calls.append((node_arg, member_arg))
+        return child
+
+    monkeypatch.setattr(_patch, "object_build_methoddescriptor", fake_methoddescriptor)
+
+    result = _patch._build_builtin_child(
+        as_inspect_builder(builder), as_astroid_node(node), len, "len"
+    )
+
+    assert result is child
+    assert builder.imported_member_calls == [(node, len, "len")]
+    assert build_calls == [(node, len)]
+    assert _patch.get_metrics() == collections.Counter({"dispatch.builtin": 1})
+
+
+def test_build_class_child_forwards_exact_imported_member_arguments() -> None:
+    """`_build_class_child` forwards ``(node, member, alias)`` unchanged."""
+    builder = _RecordingImportedBuilder(imported=True)
+    node = FakeNode()
+    member = type("ImportedSample", (), {})
+
+    result = _patch._build_class_child(
+        as_inspect_builder(builder), as_astroid_node(node), member, "sample"
+    )
+
+    assert result is None
+    assert builder.imported_member_calls == [(node, member, "sample")]
+    assert _patch.get_metrics() == collections.Counter({"dispatch.imported": 1})
+
+
+def test_build_class_child_error_names_member_and_cached_type() -> None:
+    """The cached-child error names the member and the actual cached type."""
+    builder = FakeBuilder()
+    node = FakeNode()
+    member = type("BrokenCachedSample", (), {})
+    builder._done[member] = object()
+
+    with pytest.raises(_patch.PatchError) as excinfo:
+        _patch._build_class_child(
+            as_inspect_builder(builder), as_astroid_node(node), member, "broken"
+        )
+
+    assert str(excinfo.value) == (
+        f"_done entry for {member!r} must be a ClassDef, got object"
+    )
+
+
+def test_dispatch_member_to_child_forwards_alias_to_class_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Class dispatch forwards the alias to `_build_class_child` unchanged."""
+    builder = FakeBuilder()
+    node = FakeNode()
+    member = type("AliasSample", (), {})
+    child = FakeClassDef()
+    calls: list[tuple[object, object, object, object]] = []
+
+    def fake_build_class_child(
+        builder_arg: object,
+        node_arg: object,
+        member_arg: object,
+        alias_arg: object,
+    ) -> object:
+        calls.append((builder_arg, node_arg, member_arg, alias_arg))
+        return child
+
+    monkeypatch.setattr(_patch, "_build_class_child", fake_build_class_child)
+
+    result = _patch._dispatch_member_to_child(
+        as_inspect_builder(builder),
+        as_astroid_node(node),
+        member,
+        "sample",
+        _DISPATCH_LOGGER,
+    )
+
+    assert result is child
+    assert calls == [(builder, node, member, "sample")]
+
+
+def test_dispatch_member_to_child_respects_const_special_alias() -> None:
+    """Const dispatch passes the alias through to the special-attribute gate."""
+    builder = FakeBuilder()
+    node = FakeNode()
+    node.special_attributes.add("__doc__")
+
+    result = _patch._dispatch_member_to_child(
+        as_inspect_builder(builder),
+        as_astroid_node(node),
+        "docstring",
+        "__doc__",
+        _DISPATCH_LOGGER,
+    )
+
+    assert result is None
+    assert _patch.get_metrics() == collections.Counter({"dispatch.const.special": 1})
+
+
+def test_resolve_member_ignores_class_getitem_on_non_pypy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`__class_getitem__` is only special when running on PyPy."""
+    monkeypatch.setattr(_patch, "IS_PYPY", False)
+
+    member, is_pypy_class_getitem, should_skip = _patch._resolve_member(
+        as_astroid_node(FakeNode()),
+        _ClassWithClassGetItem,
+        "__class_getitem__",
+    )
+
+    assert is_pypy_class_getitem is False, (
+        "__class_getitem__ must not be flagged when IS_PYPY is False"
+    )
+    assert should_skip is False
+    assert member is _ClassWithClassGetItem.__dict__["__class_getitem__"].__func__, (
+        "off PyPy the bound method must be unwrapped like any other"
+    )
+
+
+@pytest.mark.parametrize(
+    ("is_pypy_class_getitem", "spy_target", "alias"),
+    [
+        (True, "_build_builtin_child", "__class_getitem__"),
+        (False, "_dispatch_member_to_child", "member"),
+    ],
+)
+def test_object_build_forwards_resolved_member(
+    monkeypatch: pytest.MonkeyPatch,
+    is_pypy_class_getitem: bool,  # ruff:ignore[boolean-type-hint-positional-argument] - parametrized flag, not an API.
+    spy_target: str,
+    alias: str,
+) -> None:
+    """Both builder routes receive the resolved member, not None."""
+    builder = FakeBuilder()
+    node = FakeNode()
+    target = type("ForwardingTarget", (), {})
+    sentinel = object()
+    calls: list[tuple[object, ...]] = []
+
+    def spy(*args: object) -> object:
+        calls.append(args[:4])
+        return object()
+
+    monkeypatch.setattr(builtins, "dir", lambda obj: [alias])
+    monkeypatch.setattr(
+        _patch,
+        "_resolve_member",
+        lambda node_arg, obj, alias_arg, logger=None: (
+            sentinel,
+            is_pypy_class_getitem,
+            False,
+        ),
+    )
+    monkeypatch.setattr(_patch, spy_target, spy)
+
+    _patch._object_build_without_pypy_descriptor_aliases(
+        as_inspect_builder(builder), as_astroid_node(node), target
+    )
+
+    assert calls == [(builder, node, sentinel, alias)]
+
+
+def test_dispatch_member_to_child_builds_real_builtin_child() -> None:
+    """A genuine builtin member takes the builtin branch and yields a child."""
+    builder = FakeBuilder()
+    node = FakeNode()
+
+    result = _patch._dispatch_member_to_child(
+        as_inspect_builder(builder),
+        as_astroid_node(node),
+        len,
+        "len",
+        _DISPATCH_LOGGER,
+    )
+
+    assert result is not None
+    assert _patch.get_metrics() == collections.Counter({"dispatch.builtin": 1})
