@@ -1,3 +1,8 @@
+<!-- markdownlint-disable-next-line MD041 -->
+> **pylint-pypy-shim, 2026–2026**  
+> It worked around the bug until the bug stopped existing.  
+> Mission accomplished. 🫡
+
 # pylint-pypy-shim
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](
